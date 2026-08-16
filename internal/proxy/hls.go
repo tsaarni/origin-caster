@@ -89,18 +89,3 @@ func resolveURL(base *url.URL, ref string) string {
 	}
 	return base.ResolveReference(refURL).String()
 }
-
-func buildProxyLink(proxyBaseURL, targetURL, origin, referer, headersJSON string) string {
-	q := url.Values{}
-	q.Set("url", targetURL)
-	if origin != "" {
-		q.Set("origin", origin)
-	}
-	if referer != "" {
-		q.Set("referer", referer)
-	}
-	if headersJSON != "" {
-		q.Set("headers", headersJSON)
-	}
-	return fmt.Sprintf("%s/proxy?%s", proxyBaseURL, q.Encode())
-}

@@ -1,33 +1,70 @@
 package mdns
 
 import (
-	"context"
 	"net"
 	"testing"
-	"time"
+
+	"github.com/grandcat/zeroconf"
 )
 
 func TestParseServiceEntry(t *testing.T) {
-	// Test advertiser creation and shutdown
-	ip := net.ParseIP("192.168.1.100")
-	adv, err := NewAdvertiser("Test Proxy", 8010, ip, nil, "264709")
-	if err != nil {
-		t.Logf("Advertiser registration error (expected in some test environments): %v", err)
-		return
-	}
-	defer adv.Shutdown()
-
-	if adv.DeviceID() == "" {
-		t.Fatal("Expected non-empty device ID")
+	entry := &zeroconf.ServiceEntry{
+		ServiceRecord: zeroconf.ServiceRecord{Instance: "Living Room TV"},
+		HostName: "living-room.local",
+		Port:     8009,
+		AddrIPv4: []net.IP{net.ParseIP("192.168.1.50")},
+		Text:     []string{"id=abc123", "fn=Living Room TV", "md=Chromecast", "ca=264709"},
 	}
 
-	discoverer := NewDiscoverer(adv.DeviceID(), 8010)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	devices, err := discoverer.Discover(ctx, 1*time.Second)
-	if err != nil {
-		t.Logf("Discover error: %v", err)
+	dev := parseServiceEntry(entry)
+	if dev == nil {
+		t.Fatal("expected a parsed device")
 	}
-	t.Logf("Found %d devices on network", len(devices))
+	if dev.ID != "abc123" {
+		t.Errorf("ID = %q, want abc123", dev.ID)
+	}
+	if dev.FriendlyName != "Living Room TV" {
+		t.Errorf("FriendlyName = %q, want Living Room TV", dev.FriendlyName)
+	}
+	if dev.ModelName != "Chromecast" {
+		t.Errorf("ModelName = %q, want Chromecast", dev.ModelName)
+	}
+	if dev.Port != 8009 {
+		t.Errorf("Port = %d, want 8009", dev.Port)
+	}
+	if !dev.IP.Equal(net.ParseIP("192.168.1.50")) {
+		t.Errorf("IP = %v, want 192.168.1.50", dev.IP)
+	}
+}
+
+func TestParseServiceEntryDefaults(t *testing.T) {
+	entry := &zeroconf.ServiceEntry{
+		ServiceRecord: zeroconf.ServiceRecord{Instance: "Kitchen"},
+		Port:     8009,
+		AddrIPv4: []net.IP{net.ParseIP("192.168.1.51")},
+		Text:     []string{"id=xyz"},
+	}
+
+	dev := parseServiceEntry(entry)
+	if dev == nil {
+		t.Fatal("expected a parsed device")
+	}
+	if dev.FriendlyName != "Kitchen" {
+		t.Errorf("FriendlyName = %q, want Kitchen (from instance)", dev.FriendlyName)
+	}
+	if dev.ModelName != "Chromecast" {
+		t.Errorf("ModelName = %q, want default Chromecast", dev.ModelName)
+	}
+}
+
+func TestParseServiceEntryNoIP(t *testing.T) {
+	entry := &zeroconf.ServiceEntry{
+		ServiceRecord: zeroconf.ServiceRecord{Instance: "Ghost"},
+		Port:     8009,
+		Text:     []string{"id=ghost"},
+	}
+
+	if dev := parseServiceEntry(entry); dev != nil {
+		t.Errorf("expected nil for entry without IP, got %+v", dev)
+	}
 }

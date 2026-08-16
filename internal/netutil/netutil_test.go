@@ -5,16 +5,16 @@ import (
 )
 
 func TestDetectLANIP(t *testing.T) {
-	info, err := DetectLANIP("")
+	ip, err := DetectLANIP()
 	if err != nil {
 		t.Logf("DetectLANIP failed (may happen in isolated container/sandbox): %v", err)
 		return
 	}
-	t.Logf("Detected LAN IP: %s, Interface: %+v", info.IP.String(), info.Interface)
-	if info.IP == nil {
+	t.Logf("Detected LAN IP: %s", ip.String())
+	if ip == nil {
 		t.Fatal("Expected non-nil IP")
 	}
-	if info.IP.IsLoopback() {
-		t.Fatalf("Expected non-loopback IP, got %s", info.IP.String())
+	if ip.IsLoopback() {
+		t.Fatalf("Expected non-loopback IP, got %s", ip.String())
 	}
 }

@@ -7,38 +7,15 @@ import (
 	"strings"
 )
 
-// NetworkInfo contains information about the detected local network interface.
-type NetworkInfo struct {
-	IP        net.IP
-	Interface *net.Interface
-}
-
-// DetectLANIP discovers the primary routable IPv4 address and interface on the local machine.
-// If ifaceName is provided, it specifically searches for that interface.
-func DetectLANIP(ifaceName string) (*NetworkInfo, error) {
-	if ifaceName != "" {
-		iface, err := net.InterfaceByName(ifaceName)
-		if err != nil {
-			return nil, fmt.Errorf("interface %q not found: %w", ifaceName, err)
-		}
-		ip, err := getIPv4FromInterface(iface)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get IPv4 for %q: %w", ifaceName, err)
-		}
-		return &NetworkInfo{IP: ip, Interface: iface}, nil
-	}
-
+// DetectLANIP discovers the primary routable IPv4 address on the local machine.
+func DetectLANIP() (net.IP, error) {
 	// Strategy 1: Outbound UDP connection probe (does not send packets)
 	conn, err := net.Dial("udp4", "8.8.8.8:80")
 	if err == nil {
 		defer conn.Close()
 		localAddr := conn.LocalAddr().(*net.UDPAddr)
 		if localAddr.IP != nil && !localAddr.IP.IsLoopback() {
-			iface, ifaceErr := getInterfaceByIP(localAddr.IP)
-			if ifaceErr == nil {
-				return &NetworkInfo{IP: localAddr.IP, Interface: iface}, nil
-			}
-			return &NetworkInfo{IP: localAddr.IP, Interface: nil}, nil
+			return localAddr.IP, nil
 		}
 	}
 
@@ -48,7 +25,7 @@ func DetectLANIP(ifaceName string) (*NetworkInfo, error) {
 		return nil, fmt.Errorf("failed to enumerate network interfaces: %w", err)
 	}
 
-	var candidates []*NetworkInfo
+	var candidates []net.IP
 
 	for _, iface := range interfaces {
 		// Filter out down or loopback interfaces
@@ -63,12 +40,11 @@ func DetectLANIP(ifaceName string) (*NetworkInfo, error) {
 
 		// Prefer private address ranges (RFC 1918)
 		if isPrivateIPv4(ip) {
-			info := &NetworkInfo{IP: ip, Interface: &iface}
 			// On macOS, en0 is almost always primary Wi-Fi or Ethernet
 			if strings.EqualFold(iface.Name, "en0") {
-				return info, nil
+				return ip, nil
 			}
-			candidates = append(candidates, info)
+			candidates = append(candidates, ip)
 		}
 	}
 
@@ -97,32 +73,6 @@ func getIPv4FromInterface(iface *net.Interface) (net.IP, error) {
 		}
 	}
 	return nil, fmt.Errorf("no IPv4 address on interface %s", iface.Name)
-}
-
-func getInterfaceByIP(targetIP net.IP) (*net.Interface, error) {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return nil, err
-	}
-	for _, iface := range interfaces {
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip != nil && ip.Equal(targetIP) {
-				return &iface, nil
-			}
-		}
-	}
-	return nil, fmt.Errorf("interface for IP %s not found", targetIP.String())
 }
 
 func isPrivateIPv4(ip net.IP) bool {

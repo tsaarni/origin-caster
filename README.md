@@ -1,22 +1,19 @@
 # origin-caster
 
-Stream video to your physical Chromecast or Android TV from websites whose players completely lack native Google Cast support.
+Cast videos from sites without native Cast support to your Chromecast or Android TV.
 
-Many video streaming sites protect their media using strict `Referer`/`Origin` checks, cross-origin (CORS) blocks, session cookies, and tokenized HLS streams with AES-128 encryption keys. Physical Chromecast receivers cannot access browser cookies or pass these checks directly.
-
-**origin-caster** detects the active stream URL and captures your browser's session headers, commanding the physical TV to stream through a local proxy that fetches video segments on the TV's behalf — the TV itself decrypts the AES-128 keys, which the proxy relays along with the video.
-
+Some streaming sites lock video delivery to a browser session: requests must carry the right cookies, `Referer`/`Origin` headers, and user-agent, which a Chromecast cannot present. Origin-caster bridges that gap with a local proxy: it captures the active stream URL together with the browser's request headers and relays them unchanged, making the TV's requests look exactly like the browser's.
 
 ## Quickstart
 
-### 1. Build & Run
+### 1. Run
 ```bash
-# Build binary
-make build
-
 # Start origin-caster
 ./bin/origin-caster -tv-name "Living Room TV"
 ```
+
+Note that origin-caster exposes a web dashboard and media proxy on `http://localhost:8888` (or the address you specify with `-http-addr`)
+without authentication. Do not use it on a public network.
 
 ### 2. Cast from Any Browser Tab
 1. Open the video on any streaming website.
@@ -25,47 +22,21 @@ make build
 4. Open **http://localhost:8888** in your browser, click **Copy Extraction Snippet**, paste it into the Console, and press **Enter**.
 5. Playback starts on the TV with live remote controls (play, pause, seek, volume) on the web dashboard (launch takes a few seconds; Android TV can take up to ~20 s).
 
+![Web dashboard](docs/dashboard.png)
+
 ## CLI Options
 
-Flags are grouped by what they control: the virtual device (what your browser casts to), the web server, and the physical TV.
-
-### Virtual device (what your browser casts to)
-
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-device-name` | `origin-caster (Proxy)` | Name of the virtual Chromecast, shown in the Cast menu |
-| `-cast-port` | `8009` | Port for Cast V2 control connections (TLS). Your browser casts to this port |
-| `-dial-port` | `8008` | Port for the DIAL discovery service. TVs and apps use this to find the device |
-| `-lan-ip` | auto-detected | LAN IP advertised to the browser and TV. Set it if auto-detection picks the wrong network |
-
-### Web server (dashboard + media proxy)
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `-http-addr` | `:8888` | Address (host:port) of the web dashboard and media proxy. You open the dashboard here; the TV fetches video here. `:8888` listens on all interfaces and advertises the detected LAN IP. To force an address, give a host, e.g. `-http-addr 192.168.1.50:8888` — the TV must be able to reach it |
-
-### Physical TV (the device that plays the video)
-
-| Flag | Default | Description |
-|------|---------|-------------|
+| `-http-addr` | `:8888` | Address (host:port) of the web dashboard and media proxy. You open the dashboard here; the TV fetches video here. `:8888` listens on all interfaces and advertises the detected LAN IP. To force an address, give a host, e.g. `-http-addr 192.168.1.50:8888` - the TV must be able to reach it |
+| `-lan-ip` | auto-detected | LAN IP advertised in the proxy URL handed to the TV. Set it if auto-detection picks the wrong network |
 | `-tv-name` | `""` | Pick the physical TV by name (case-insensitive substring), e.g. `-tv-name "Living Room TV"` |
 | `-tv-ip` | `""` | IP address of the physical TV. Auto-discovered if empty |
 | `-tv-port` | `8009` | Port of the physical TV's Cast V2 service. Only needed if the TV uses a non-standard port |
-
-### Other
-
-| Flag | Default | Description |
-|------|---------|-------------|
 | `-list` | `false` | Scan the LAN for Chromecast devices, print them, and exit |
 | `-scan-timeout` | `3s` | Timeout for the device scan |
 | `-log-file` | `""` | Also write logs to this file (default: stderr only) |
 | `-v` / `-verbose` | `false` | Verbose protocol logging |
-
-
-## Ports
-
-origin-caster uses three ports: 8008 (DIAL discovery), 8009 (Cast control), and 8888 (dashboard + media proxy). Their flags (`-dial-port`, `-cast-port`, `-tv-port`, `-http-addr`) are listed in [CLI Options](#cli-options) above. For the full ports table, discovery details, and protocol references, see [CONTRIBUTING.md](CONTRIBUTING.md).
-
 
 ## Development & Architecture
 

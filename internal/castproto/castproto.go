@@ -2,8 +2,6 @@ package castproto
 
 import (
 	"encoding/binary"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 
@@ -16,7 +14,6 @@ const (
 	NamespaceHeartbeat  = "urn:x-cast:com.google.cast.tp.heartbeat"
 	NamespaceReceiver   = "urn:x-cast:com.google.cast.receiver"
 	NamespaceMedia      = "urn:x-cast:com.google.cast.media"
-	NamespaceDeviceAuth = "urn:x-cast:com.google.cast.tp.deviceauth"
 )
 
 // CastMessage represents the protobuf message used in the Cast V2 protocol.
@@ -175,61 +172,4 @@ func NewStringMessage(sourceId, destId, namespace, jsonPayload string) *CastMess
 		PayloadType:     0,
 		PayloadUtf8:     &jsonPayload,
 	}
-}
-
-// GenericPayload provides a quick way to inspect the message type and requestId.
-type GenericPayload struct {
-	Type      string `json:"type"`
-	RequestId int    `json:"requestId,omitempty"`
-}
-
-// HeartbeatPayload represents PING / PONG messages.
-type HeartbeatPayload struct {
-	Type string `json:"type"`
-}
-
-// ConnectionPayload represents CONNECT / CLOSE messages.
-type ConnectionPayload struct {
-	Type      string                 `json:"type"`
-	Origin    map[string]interface{} `json:"origin,omitempty"`
-	UserAgent string                 `json:"userAgent,omitempty"`
-}
-
-// MediaItem represents media structure inside a LOAD or MEDIA_STATUS message.
-type MediaItem struct {
-	ContentId        string                 `json:"contentId"`
-	StreamType       string                 `json:"streamType,omitempty"`
-	ContentType      string                 `json:"contentType,omitempty"`
-	Duration         float64                `json:"duration,omitempty"`
-	Metadata         map[string]interface{} `json:"metadata,omitempty"`
-	CustomData       map[string]interface{} `json:"customData,omitempty"`
-	Tracks           []interface{}          `json:"tracks,omitempty"`
-	TextTrackStyle   map[string]interface{} `json:"textTrackStyle,omitempty"`
-	HlsSegmentFormat string                 `json:"hlsSegmentFormat,omitempty"`
-	HlsVideoSegmentFormat string            `json:"hlsVideoSegmentFormat,omitempty"`
-}
-
-// LoadMediaPayload represents the urn:x-cast:com.google.cast.media LOAD payload.
-type LoadMediaPayload struct {
-	Type         string                 `json:"type"`
-	RequestId    int                    `json:"requestId"`
-	SessionId    string                 `json:"sessionId,omitempty"`
-	Media        MediaItem              `json:"media"`
-	Autoplay     *bool                  `json:"autoplay,omitempty"`
-	CurrentTime  float64                `json:"currentTime,omitempty"`
-	PlaybackRate float64                `json:"playbackRate,omitempty"`
-	CustomData   map[string]interface{} `json:"customData,omitempty"`
-	ActiveTrackIds []int                `json:"activeTrackIds,omitempty"`
-}
-
-// ParseGenericPayload parses the message type from JSON string.
-func ParseGenericPayload(payload string) (*GenericPayload, error) {
-	if payload == "" {
-		return nil, errors.New("empty payload")
-	}
-	var gp GenericPayload
-	if err := json.Unmarshal([]byte(payload), &gp); err != nil {
-		return nil, err
-	}
-	return &gp, nil
 }

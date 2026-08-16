@@ -1,4 +1,4 @@
-package castrelay
+package controller
 
 import (
 	"bytes"
@@ -10,14 +10,12 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/tsaarni/origin-caster/internal/castproto"
-	"github.com/tsaarni/origin-caster/internal/certs"
 	"github.com/tsaarni/origin-caster/internal/mdns"
 	"github.com/tsaarni/origin-caster/internal/proxy"
 )
@@ -32,7 +30,6 @@ type DeviceController struct {
 	transportID  string
 	sessionID    string
 	mediaSession int
-	pendingSeek  float64
 	state        proxy.PlaybackState
 	reqCounter   int64
 	done         chan struct{}
@@ -44,7 +41,7 @@ func NewDeviceController(target *mdns.DiscoveredDevice, proxy *proxy.Server) *De
 	return &DeviceController{
 		target:    target,
 		httpProxy: proxy,
-		clientTLS: certs.NewClientTLSConfig(),
+		clientTLS: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS10},
 		done:      make(chan struct{}),
 	}
 }
@@ -295,17 +292,7 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 	}
 
 	// Resolve relative URLs
-	if !strings.HasPrefix(req.URL, "http://") && !strings.HasPrefix(req.URL, "https://") {
-		if req.Origin != "" {
-			req.URL = strings.TrimRight(req.Origin, "/") + "/" + strings.TrimLeft(req.URL, "/")
-		} else if req.Referer != "" {
-			if refURL, err := url.Parse(req.Referer); err == nil {
-				if resolved, err := refURL.Parse(req.URL); err == nil {
-					req.URL = resolved.String()
-				}
-			}
-		}
-	}
+	req.URL = proxy.ResolveMediaURL(req.URL, req.Origin, req.Referer)
 
 	// 1. Probe TV for any running app session (we may not know about it on fresh start)
 	probeReqID := c.nextRequestID()
@@ -329,7 +316,6 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 	// Stop any existing session so Android TV launches a fresh visible receiver
 	c.mu.Lock()
 	existingSID := c.sessionID
-	existingTID := c.transportID
 	c.mu.Unlock()
 	if existingSID != "" {
 		slog.Info("Stopping prior receiver session before launch", "sessionId", existingSID)
@@ -350,7 +336,6 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 				break
 			}
 		}
-		_ = existingTID // used above
 	}
 
 	reqID := c.nextRequestID()
@@ -535,16 +520,6 @@ func detectContentType(targetURL string, headers map[string]string) string {
 	}
 
 	return "application/x-mpegurl"
-}
-
-// CastURL wraps CastMedia for simple URL invocation.
-func (c *DeviceController) CastURL(rawURL, origin, referer, headersJSON string) error {
-	return c.CastMedia(proxy.CastRequest{
-		URL:        rawURL,
-		Origin:     origin,
-		Referer:    referer,
-		RawHeaders: headersJSON,
-	})
 }
 
 // Play resumes playback.

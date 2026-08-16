@@ -23,7 +23,7 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build canonical binary (make build → bin/)
+      - name: Build canonical binary (make build -> bin/)
         run: make build
 
       - name: Cross-compile binaries

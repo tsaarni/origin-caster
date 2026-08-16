@@ -10,8 +10,6 @@ VERSION            ?= $(shell git describe --tags --always --dirty 2>/dev/null |
 COMMIT             ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME         ?= $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 
-LDFLAGS            = -s -w
-
 .PHONY: all build clean test test-coverage vet run list install chrome-dev help
 
 all: build
@@ -20,7 +18,7 @@ all: build
 build:
 	@echo "Building $(BINARY_NAME)..."
 	@mkdir -p $(BUILD_DIR)
-	go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
+	go build -o $(BUILD_DIR)/$(BINARY_NAME) $(CMD_DIR)
 	@echo "Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
 
 ## test: Run all unit and integration tests (Go only; snippet JS tests run via test-js)
@@ -48,7 +46,7 @@ vet:
 list: build
 	./$(BUILD_DIR)/$(BINARY_NAME) -list
 
-## run: Build and run the proxy relay
+## run: Build and run
 run: build
 	./$(BUILD_DIR)/$(BINARY_NAME)
 

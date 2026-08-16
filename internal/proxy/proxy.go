@@ -15,7 +15,7 @@ import (
 )
 
 // CastRequest holds the payload passed to /api/cast from the browser console
-// or an API client. The web server parses it and the castrelay controller
+// or an API client. The web server parses it and the device controller
 // dispatches it to the physical TV.
 type CastRequest struct {
 	URL         string            `json:"url"`
@@ -45,7 +45,6 @@ type PlaybackState struct {
 	ReceiverName   string                 `json:"receiverName,omitempty"`
 	ReceiverModel  string                 `json:"receiverModel,omitempty"`
 	ReceiverIP     string                 `json:"receiverIP,omitempty"`
-	CustomData     map[string]interface{} `json:"customData,omitempty"`
 }
 
 // Stats tracks media proxy metrics.
@@ -57,9 +56,9 @@ type Stats struct {
 }
 
 // Server fetches media files from the upstream host on behalf of the physical
-// TV. It injects the browser's credentials (cookies, referer, origin,
-// user-agent) into every request and rewrites HLS playlists so the TV keeps
-// fetching through the proxy.
+// TV. It adds the browser's request headers (cookies, referer, origin,
+// user-agent) to every request, as-is, and rewrites HLS playlists so the TV
+// keeps fetching through the proxy.
 type Server struct {
 	baseURL       string // public address, e.g. "http://192.168.1.129:8888"
 	client        *http.Client
@@ -93,6 +92,12 @@ func (s *Server) BaseURL() string {
 
 // BuildProxyURL generates a proxy URL pointing to the given upstream target URL.
 func (s *Server) BuildProxyURL(targetURL, origin, referer, customHeadersJSON string) string {
+	return buildProxyLink(s.baseURL, targetURL, origin, referer, customHeadersJSON)
+}
+
+// buildProxyLink builds a /proxy endpoint URL carrying the target URL and the
+// request headers that should be added when the TV fetches it.
+func buildProxyLink(proxyBaseURL, targetURL, origin, referer, headersJSON string) string {
 	q := url.Values{}
 	q.Set("url", targetURL)
 	if origin != "" {
@@ -101,14 +106,33 @@ func (s *Server) BuildProxyURL(targetURL, origin, referer, customHeadersJSON str
 	if referer != "" {
 		q.Set("referer", referer)
 	}
-	if customHeadersJSON != "" {
-		q.Set("headers", customHeadersJSON)
+	if headersJSON != "" {
+		q.Set("headers", headersJSON)
 	}
-	return fmt.Sprintf("%s/proxy?%s", s.BaseURL(), q.Encode())
+	return fmt.Sprintf("%s/proxy?%s", proxyBaseURL, q.Encode())
 }
 
-// SetActiveSession stores the browser credentials captured by the web server
-// (/api/cast) so subsequent /proxy fetches can inject them upstream.
+// ResolveMediaURL turns a possibly-relative media URL into an absolute one,
+// using the captured origin or referer as the base.
+func ResolveMediaURL(rawURL, origin, referer string) string {
+	if strings.HasPrefix(rawURL, "http://") || strings.HasPrefix(rawURL, "https://") {
+		return rawURL
+	}
+	if origin != "" {
+		return strings.TrimRight(origin, "/") + "/" + strings.TrimLeft(rawURL, "/")
+	}
+	if referer != "" {
+		if refURL, err := url.Parse(referer); err == nil {
+			if resolved, err := refURL.Parse(rawURL); err == nil {
+				return resolved.String()
+			}
+		}
+	}
+	return rawURL
+}
+
+// SetActiveSession stores the browser request headers captured by the web
+// server (/api/cast) so subsequent /proxy fetches can add them upstream.
 func (s *Server) SetActiveSession(req CastRequest) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -166,19 +190,10 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !strings.HasPrefix(rawTargetURL, "http://") && !strings.HasPrefix(rawTargetURL, "https://") {
-		origin := r.URL.Query().Get("origin")
-		referer := r.URL.Query().Get("referer")
-		if origin != "" {
-			rawTargetURL = strings.TrimRight(origin, "/") + "/" + strings.TrimLeft(rawTargetURL, "/")
-		} else if referer != "" {
-			if refURL, err := url.Parse(referer); err == nil {
-				if resolved, err := refURL.Parse(rawTargetURL); err == nil {
-					rawTargetURL = resolved.String()
-				}
-			}
-		}
-	}
+	origin := r.URL.Query().Get("origin")
+	referer := r.URL.Query().Get("referer")
+
+	rawTargetURL = ResolveMediaURL(rawTargetURL, origin, referer)
 
 	targetURL, err := url.Parse(rawTargetURL)
 	if err != nil || !targetURL.IsAbs() {
@@ -219,7 +234,6 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	upstreamReq.Header.Set("User-Agent", ua)
 
 	// Origin injection
-	origin := r.URL.Query().Get("origin")
 	if origin == "" && session != nil && session.Origin != "" {
 		origin = session.Origin
 	}
@@ -229,7 +243,6 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	upstreamReq.Header.Set("Origin", origin)
 
 	// Referer injection
-	referer := r.URL.Query().Get("referer")
 	if referer == "" && session != nil && session.Referer != "" {
 		referer = session.Referer
 	}

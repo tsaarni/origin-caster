@@ -168,15 +168,15 @@ export async function updateLiveState() {
     const nowSub = document.getElementById('now-sub');
     if (nowSub) {
       if (pb.activeApp) {
-        nowSub.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">tv</span><span>' + (pb.receiverName || 'TV') + ' • ' + pb.activeApp + '</span>';
+        nowSub.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">tv</span><span>' + (pb.receiverName || 'TV') + ' - ' + pb.activeApp + '</span>';
       } else {
-        nowSub.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">tv</span><span>Ready • Waiting for stream playback</span>';
+        nowSub.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;">tv</span><span>Ready - Waiting for stream playback</span>';
       }
     }
 
     const targetName = document.getElementById('target-name');
     if (targetName && (pb.receiverName || pb.receiverIP)) {
-      targetName.innerText = (pb.receiverName || 'Receiver') + (pb.receiverIP ? ' • ' + pb.receiverIP : '');
+      targetName.innerText = (pb.receiverName || 'Receiver') + (pb.receiverIP ? ' - ' + pb.receiverIP : '');
     }
 
     // Timecode & Slider

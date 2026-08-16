@@ -51,7 +51,7 @@
             <div class="track-title" id="now-title">No Active Stream</div>
             <div class="track-subtitle" id="now-sub">
               <span class="material-symbols-outlined" style="font-size:16px;">tv</span>
-              <span>Ready • Waiting for stream playback</span>
+              <span>Ready - Waiting for stream playback</span>
             </div>
           </div>
           <div id="live-chip" class="m3-status-chip chip-idle">STANDBY</div>
@@ -119,7 +119,7 @@
             <div class="accordion-content">
               <md-outlined-text-field label="Referer Header" id="referer" name="referer" placeholder="https://provider.example.com/embed/player"></md-outlined-text-field>
               <md-outlined-text-field label="Origin Header" id="origin" name="origin" placeholder="https://provider.example.com"></md-outlined-text-field>
-              <md-outlined-text-field label="Session Cookies" id="cookies" name="cookies" placeholder="auth_token=xyz; session=123"></md-outlined-text-field>
+              <md-outlined-text-field label="Cookies" id="cookies" name="cookies" placeholder="name1=value1; name2=value2"></md-outlined-text-field>
               <md-outlined-text-field label="Start Offset (Seconds)" id="startTime" name="startTime" type="number" min="0" placeholder="0"></md-outlined-text-field>
             </div>
           </details>
@@ -138,7 +138,7 @@
       <!-- Browser Stream Extractor Card -->
       <div class="m3-card">
         <div class="m3-section-title">Browser Stream Extractor</div>
-        <div class="m3-help-text">Extracts video URLs, session cookies, and authorization headers from your browser tab to cast directly to the TV.</div>
+        <div class="m3-help-text">Extracts the video URL and relays the browser's request headers (cookies, referer, origin) to cast directly to the TV.</div>
         
         <div class="step-list">
           <div class="step-item">

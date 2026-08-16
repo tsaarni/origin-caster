@@ -31,12 +31,4 @@ func TestFramingAndProtobuf(t *testing.T) {
 	if readMsg.PayloadUtf8 == nil || *readMsg.PayloadUtf8 != payload {
 		t.Errorf("PayloadUtf8 mismatch: got %v, want %s", readMsg.PayloadUtf8, payload)
 	}
-
-	gp, err := ParseGenericPayload(*readMsg.PayloadUtf8)
-	if err != nil {
-		t.Fatalf("ParseGenericPayload failed: %v", err)
-	}
-	if gp.Type != "LOAD" || gp.RequestId != 42 {
-		t.Errorf("GenericPayload mismatch: %+v", gp)
-	}
 }

@@ -18,10 +18,9 @@ import (
 	"github.com/tsaarni/origin-caster/web"
 )
 
-// StreamController is implemented by castrelay.DeviceController.
+// StreamController is implemented by controller.DeviceController.
 type StreamController interface {
 	CastMedia(req proxy.CastRequest) error
-	CastURL(rawURL, origin, referer, headersJSON string) error
 	Play() error
 	Pause() error
 	Seek(seconds float64) error

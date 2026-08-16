@@ -1,6 +1,6 @@
-# origin-caster — Developer Guide
+# origin-caster - Developer Guide
 
-This is the developer guide for origin-caster: architecture, code layout, build/test commands, the REST API, and how the internal pieces work (browser snippet, media proxy, Cast relay).
+This is the developer guide for origin-caster: architecture, code layout, build/test commands, the REST API, and how the internal pieces work (browser snippet, media proxy, device controller).
 
 For install, usage, and CLI flags, see [README.md](README.md).
 
@@ -8,73 +8,30 @@ For install, usage, and CLI flags, see [README.md](README.md).
 
 Terms used throughout this document:
 
-- **Sender** — the browser that starts playback (your Chrome tab).
-- **Receiver** — the app on the TV that plays the video (the default media receiver on Chromecast / Android TV).
-- **Cast V2** — Google's control protocol. Sender and receiver talk over TLS; messages include `LAUNCH` and `LOAD`.
-- **DIAL** — the protocol Chromecast devices use to be discovered and launched on the LAN.
-- **mDNS / DNS-SD** — LAN discovery: devices advertise and find each other by name and service type.
-- **HLS** — a video format: a playlist (`.m3u8`) plus many small segment files, optionally AES-128 encrypted.
-- **DASH** — a similar format: a manifest (`.mpd`) plus segments.
+- **Sender** - the browser that starts playback (your Chrome tab).
+- **Receiver** - the app on the TV that plays the video (the default media receiver on Chromecast / Android TV).
+- **Cast V2** - Google's control protocol. Sender and receiver talk over TLS; messages include `LAUNCH` and `LOAD`.
+- **mDNS / DNS-SD** - LAN discovery: devices advertise and find each other by name and service type.
+- **HLS** - a video format: a playlist (`.m3u8`) plus many small segment files, optionally AES-128 encrypted.
+- **DASH** - a similar format: a manifest (`.mpd`) plus segments.
 
 ## Architecture & data flow
 
 The diagram shows what runs where: a web browser, origin-caster on the local machine, the physical TV, and the upstream media site.
 
-```mermaid
-flowchart TD
-    subgraph Browser["Web Browser"]
-        DASH["Web Dashboard / Extraction Snippet"]
-        NATIVE["Native Chrome Cast menu"]
-    end
-
-    subgraph Local["origin-caster (local machine)"]
-        MDNS["Discovery<br/>mDNS · DIAL/SSDP (:8008)"]
-        API["REST API + Web Dashboard (:8888)"]
-        CTRL["Device Controller<br/>(outbound TLS to TV)"]
-        RELAY["Cast V2 MITM Relay (:8009)"]
-        PROXY["Media Proxy + HLS Rewriter<br/>(:8888/proxy)"]
-    end
-
-    subgraph TV["Physical TV"]
-        CAST["Chromecast / Android TV"]
-        RECEIVER["Default Media Receiver<br/>(AES-128 decrypt + playback)"]
-    end
-
-    subgraph Upstream["Upstream Media Host"]
-        MEDIA["Playlists, Segments, AES-128 Keys"]
-    end
-
-    MDNS -. "advertises virtual device<br/>(_googlecast, _dial)" .-> NATIVE
-    MDNS -. "scans for physical TV" .-> CAST
-
-    DASH -->|"1. POST/GET /api/cast<br/>URL + cookies + referer + origin"| API
-    API -->|"2. CastMedia()"| CTRL
-    CTRL -->|"3. LAUNCH + LOAD<br/>(Cast V2, TLS)"| CAST
-    NATIVE -->|"4. Cast V2 LOAD (TLS)"| RELAY
-    RELAY -->|"5. forwards + rewrites<br/>contentId to /proxy"| CAST
-    CAST -->|"6. launches"| RECEIVER
-
-    RECEIVER ==>|"7. GET playlist / segments / keys"| PROXY
-    PROXY ==>|"8. GET with browser credentials"| MEDIA
-    MEDIA ==>|"9. encrypted data"| PROXY
-    PROXY ==>|"10. rewritten playlist; segments<br/>and keys relayed still encrypted"| RECEIVER
-```
-
-Dotted edges are LAN discovery, solid edges are the Cast control channel, thick edges are the media stream. AES-128 decryption happens on the TV — the proxy only fetches and rewrites; it never decrypts.
-
-**Discovery** runs over mDNS (UDP 5353). The virtual device advertises `_googlecast._tcp` (Cast) on `-cast-port` and `_dial._tcp` (DIAL) on `-dial-port`; origin-caster scans `_googlecast._tcp` to find the physical TV.
+<p align="center">
+  <img src="docs/architecture.png" alt="origin-caster architecture and data flow" width="1024">
+</p>
 
 ### Ports
 
-origin-caster runs three network services. Two mimic a real Chromecast; the third is its own web server.
+origin-caster runs one network service of its own:
 
 | Port | Service | Protocol | Who connects to it | Flag to change it |
 |------|---------|----------|--------------------|-------------------|
-| 8008 | DIAL discovery | DIAL over HTTP, found via SSDP/mDNS | TVs and apps, to find and launch the virtual device | `-dial-port` |
-| 8009 | Cast control | Google Cast V2 over TLS | Your browser casts here; origin-caster forwards the same commands to the TV on this port | `-cast-port` (incoming), `-tv-port` (outgoing) |
 | 8888 | Dashboard + media proxy | HTTP | Your browser (dashboard), the TV (video) | `-http-addr` |
 
-Ports 8008 and 8009 are the standard Chromecast ports, so the defaults usually work. Port 8888 must be reachable from both your browser and the TV.
+Port 8888 must be reachable from both your browser and the TV.
 
 ## Codebase layout
 
@@ -83,13 +40,11 @@ Ports 8008 and 8009 are the standard Chromecast ports, so the defaults usually w
 │   └── origin-caster/       # CLI entrypoint and lifecycle
 ├── internal/                # App-private packages (not importable from outside the module)
 │   ├── castproto/           # Cast V2 wire framing + protobuf encode/decode
-│   ├── castrelay/           # Cast V2 MITM TLS relay + direct device controller
-│   ├── certs/               # Dynamic x509 certificate generator for Cast TLS
-│   ├── dial/                # DIAL / SSDP discovery service
+│   ├── controller/          # Direct device controller (Cast V2 client to the TV)
+│   ├── mdns/                # mDNS discovery scanner for the physical TV
 │   ├── proxy/               # Media proxy: upstream fetch, header injection, HLS rewriter
 │   ├── server/              # Web dashboard, REST API, snippet serving (mounts the proxy)
-│   ├── mdns/                # mDNS advertiser (virtual device) + discovery scanner
-│   └── netutil/             # LAN IP and network interface detection
+│   └── netutil/             # LAN IP detection
 ├── web/                     # Public web content & browser snippet (embedded via web/embed.go)
 │   ├── embed.go             # //go:embed index.html app.js style.css cast.js
 │   ├── index.html, style.css, app.js   # Dashboard UI
@@ -122,100 +77,93 @@ The local server (port 8888) provides these endpoints:
 
 | Endpoint | Method | Description | Request payload / query |
 |---|---|---|---|
-| `/api/cast` | `GET`, `POST` | Send a media URL + session headers to the physical TV. Dashboard uses `POST` + JSON; the snippet uses a `GET` popup navigation with query params (or `POST` form). `OPTIONS` (CORS preflight) is handled; 400 if `url` is missing; 503 if no TV controller is attached. Response: `GET` → auto-closing HTML page for popup navigations (`Accept: text/html`), otherwise a 1×1 GIF (Image beacon); `POST` → auto-closing HTML page for form navigations, otherwise JSON | JSON body or query/form fields: `url` (required), `title`, `referer`, `origin`, `cookies`, `userAgent`, `contentType`, `currentTime`, `headers` (JSON map). The browser's `User-Agent` is captured from the request header when not supplied |
+| `/api/cast` | `GET`, `POST` | Send a media URL + request headers to the physical TV. Dashboard uses `POST` + JSON; the snippet uses a `GET` popup navigation with query params (or `POST` form). `OPTIONS` (CORS preflight) is handled; 400 if `url` is missing; 503 if no TV controller is attached. Response: `GET` -> auto-closing HTML page for popup navigations (`Accept: text/html`), otherwise a 1x1 GIF (Image beacon); `POST` -> auto-closing HTML page for form navigations, otherwise JSON | JSON body or query/form fields: `url` (required), `title`, `referer`, `origin`, `cookies`, `userAgent`, `contentType`, `currentTime`, `headers` (JSON map). The browser's `User-Agent` is captured from the request header when not supplied |
 | `/api/play` | `POST` | Resume playback on the TV; returns `{"status":"ok","action":"play"}` | None |
 | `/api/pause` | `POST` | Pause playback on the TV | None |
 | `/api/seek` | `POST` | Seek to an absolute second or a relative delta, clamped to `[0, duration]` | `?seconds=120` or `?delta=-10` (query or form body) |
 | `/api/volume` | `POST` | Set receiver volume level and mute status; `muted` accepts `true`/`1` | `?level=0.8&muted=false` (query or form body) |
 | `/api/stop` | `POST` | Stop playback and release the receiver session | None |
-| `/api/stats` | `GET` | Live JSON metrics and playback state | None — returns `total_requests`, `total_bytes`, `active_streams`, `m3u8_rewrites`, `base_url`, `playback`, `active_session` |
-| `/health` | `GET` | Liveness check | None — returns `{"status":"ok","time":"<RFC3339>"}` |
-| `/proxy` | `GET` | The path the TV fetches media through. The proxy downloads each file from the streaming site using the browser's saved credentials and hands it to the TV. See [Media proxy](#media-proxy) for details | `?url=<real-media-url>` (optionally `&origin=`, `&referer=`, `&headers=` JSON) |
+| `/api/stats` | `GET` | Live JSON metrics and playback state | None - returns `total_requests`, `total_bytes`, `active_streams`, `m3u8_rewrites`, `base_url`, `playback`, `active_session` |
+| `/health` | `GET` | Liveness check | None - returns `{"status":"ok","time":"<RFC3339>"}` |
+| `/proxy` | `GET` | The path the TV fetches media through. The proxy downloads each file from the streaming site adding the browser's request headers (cookies, referer, origin, user-agent) and hands it to the TV. See [Media proxy](#media-proxy) for details | `?url=<real-media-url>` (optionally `&origin=`, `&referer=`, `&headers=` JSON) |
 
 ## Browser extraction snippet
 
 ### Why a snippet at all
 
-Streaming sites play video with a small program called a **player** (hls.js, Video.js, dash.js, Plyr, Bitmovin, THEOplayer, ...). To cast, origin-caster needs the video's real URL, which is hidden inside the player. The snippet is JavaScript the user pastes into the site's DevTools console; it reads the URL with **detectors** — small functions, one per player.
-
-A detector must only read from an existing player, never create or change one: creating a player could break the site. Example: the hls.js detector reads `hls.url` from an existing instance; it never builds a new one.
+Streaming sites play video with a small program called a **player** (hls.js, Video.js, dash.js, Plyr, Bitmovin, THEOplayer, ...). To cast, origin-caster needs the video's real URL, which is hidden inside the player. The snippet is JavaScript the user pastes into the site's DevTools console; it reads the URL with **detectors** - small functions, one per player.
 
 ### Why the copy button gives one long script
 
-The streaming site is a public website; origin-caster runs on your own machine (localhost). For safety, browsers stop public websites from reaching your machine — otherwise any website could touch your local devices. This protection is called Local Network Access (LNA; previously Private Network Access, PNA), and CORS headers cannot override it.
+The streaming site is a public website; origin-caster may run on the same machine as the browser (localhost). For safety, browsers stop public websites from reaching your machine - otherwise any website could access your local devices. This protection is called Local Network Access (LNA; previously Private Network Access, PNA), and CORS headers cannot override it.
 
-Chrome keeps widening it: since version 142 it blocks script and API loading (fetch, XHR, script tags) from public sites to localhost; since version 147 it also blocks WebSocket connections. Only opening a new page or popup (top-level navigation) stays allowed — that is why the snippet casts via `window.open()`. We tried a short "loader" that fetched the snippet from the server; Chrome blocked it, so the snippet must arrive complete in one paste. The **Copy Extraction Snippet** button therefore copies the full minified script. Firefox has no such restriction yet, so the same code works there without changes.
+Since Chrome version 142 it blocks script and API loading (fetch, XHR, script tags) from public sites to localhost; since version 147 it also blocks WebSocket connections. Only opening a new page or popup (top-level navigation) stays allowed - that is why the snippet casts via `window.open()`. The **Copy Extraction Snippet** button therefore copies the full minified script.
 
 ### How the snippet is built and served
 
-The readable, modular detector framework lives in `web/cast.js`. It is embedded into the binary with `//go:embed` at compile time, minified at startup with `tdewolff/minify`, and injected into the dashboard (`web/app.js`).
+The readable, modular detector framework lives in `web/cast.js`. It is embedded into the binary with `//go:embed` at compile time, minified at startup, and injected into the dashboard (`web/app.js`).
 
 ### How detection works
 
 The snippet runs once as a pipeline:
 
-1. **Snapshot** — one-shot snapshot of every `<video>` (sorted by activity, so ad/teaser players rank last) plus the performance resource list.
-2. **Layered detectors** — player brands → engine reference scan (hls.js / dash.js / shaka / flv.js) → generic HTML5 → network scan.
-3. **Score and merge** — candidates from all layers are scored; the best wins wholesale (a URL from one detector is never mixed with a time from another).
+1. **Snapshot** - one-shot snapshot of every `<video>` (sorted by activity, so ad/teaser players rank last) plus the performance resource list.
+2. **Layered detectors** - player brands -> engine reference scan (hls.js / dash.js / shaka / flv.js) -> generic HTML5 -> network scan.
+3. **Score and merge** - candidates from all layers are scored; the best wins wholesale (a URL from one detector is never mixed with a time from another).
 
-To add a player: implement a detector function in the appropriate layer in `cast.js`, add a fixture to `web/cast.test.js`, run `make build` (the updated cast.js is baked into the binary), and restart the server. The per-player recipes (how to find each player and where its URL lives) are documented as comments in `web/cast.js`, right next to the detectors.
+To add a supported player: implement a detector function in the appropriate layer in `cast.js`, add a fixture to `web/cast.test.js`, run `make build`, and restart the server.
 
 ### Detector rules
 
-- **Read-only** — never call player constructors or create/initialize a player (e.g. no `dashjs.MediaPlayer().create()`, no `bitmovin.player(el)` on a plain element — only on elements already carrying the `.bmpui-*` marker).
-- **No `blob:` URLs** — if the `<video>` plays via MSE, return the real manifest from the attached engine (`hls.url`, `getSource()`, …).
+- **No `blob:` URLs** - if the `<video>` plays via MSE, return the real manifest from the attached engine (`hls.url`, `getSource()`, ...).
 - **Return a candidate** `{ url, type?, time?, player?, layer? }` or `null`; the merger scores whole candidates (exact player/engine URLs and active-`<video>` candidates win).
-
-### Debugging the snippet in a live page
-
-- `window.__OC_DEBUG__ = true` — per-detector output.
-- `window.__OC_WATCH__ = true` — retry once with a 3 s live network capture (XHR/fetch hooks) for lazy-loaded manifests.
 
 ## Media proxy
 
 ### The problem
 
-Streaming sites protect their video: they check that the player is a real browser with the right cookies, referer, and user-agent. The TV fails these checks, so it cannot play the video directly.
+Some streaming sites lock video delivery to a browser session: requests must carry the right cookies, `Referer`/`Origin` headers, and user-agent.
+The TV fails these checks, so it cannot play the video directly.
 
 ### The solution
 
 origin-caster runs a small web server (the media proxy) that fetches video **for** the TV:
 
-1. When you press Cast, the browser sends its credentials (cookies, referer, origin, user-agent) plus the video URL to the server. The server stores them.
+1. When you press Cast, the browser sends the video URL plus its request headers (cookies, referer, origin, user-agent) to the server. The server stores them as-is and never inspects their contents.
 2. The server tells the TV to play a special URL that points to our server instead of the media site.
-3. The TV asks our server for the video. Our server asks the media site, adding the browser's credentials to the request. The media site thinks a browser is downloading the video, so it allows it.
+3. The TV asks our server for the video. Our server asks the media site, adding the browser's request headers to the request. The media site thinks a browser is downloading the video, so it allows it.
 4. Our server passes the video back to the TV.
 
-The TV never talks to the media site directly. It only talks to our server, so it never needs the credentials itself.
+The TV never talks to the media site directly. It only talks to our server, so it never needs the browser's request headers itself.
 
 ### The `/proxy` endpoint
 
 Every media request from the TV goes to `/proxy`, e.g. `http://localhost:8888/proxy?url=https://media.example.com/video.mp4`. The `url` parameter holds the real file the TV wants; relative links are resolved automatically against `origin`/`referer`.
 
-To each request the proxy adds the browser's saved credentials (cookies, referer, origin, user-agent). Seeking works too: the TV's range requests are passed through. Extra query params (`&origin=`, `&referer=`, `&headers=`) can override or add headers for a single request.
+To each request the proxy adds the browser's request headers (cookies, referer, origin, user-agent), passed through as-is. Seeking works too: the TV's range requests are passed through. Extra query params (`&origin=`, `&referer=`, `&headers=`) can override or add headers for a single request.
 
-HLS videos are split into many small files: first the TV fetches a playlist (`.m3u8`) that lists all the other files (video chunks, audio, encryption keys). The proxy rewrites this playlist so that **every** item in it also points back to `/proxy`. That way the TV keeps fetching through our server for the whole video. AES-128 keys are relayed the same way — the TV decrypts, the proxy never does.
+HLS videos are split into many small files: first the TV fetches a playlist (`.m3u8`) that lists all the other files (video chunks, audio, encryption keys). The proxy rewrites this playlist so that **every** item in it also points back to `/proxy`. That way the TV keeps fetching through our server for the whole video. AES-128 keys are relayed the same way - the TV decrypts, the proxy never does.
 
 ## Protocol internals
 
 Protocol references:
-- **DIAL** (Discovery And Launch) — [official spec](https://www.dial-multiscreen.org/dial/protocol-specification), [Netflix reference implementation](https://github.com/Netflix/dial-reference)
-- **Google Cast** — [developer docs](https://developers.google.com/cast/docs), [open-source implementation (openscreen)](https://github.com/chromium/openscreen)
-- **mDNS / DNS-SD** — [RFC 6762](https://datatracker.ietf.org/doc/html/rfc6762) / [RFC 6763](https://datatracker.ietf.org/doc/html/rfc6763)
-- **SSDP** (UPnP discovery) — [UPnP Device Architecture](https://upnp.org/specs/arch/)
-- **HLS** — [RFC 8216](https://datatracker.ietf.org/doc/html/rfc8216)
+- **Google Cast** - [developer docs](https://developers.google.com/cast/docs), [open-source implementation (openscreen)](https://github.com/chromium/openscreen)
+- **mDNS / DNS-SD** - [RFC 6762](https://datatracker.ietf.org/doc/html/rfc6762) / [RFC 6763](https://datatracker.ietf.org/doc/html/rfc6763)
+- **HLS** - [RFC 8216](https://datatracker.ietf.org/doc/html/rfc8216)
 
-### Cast V2 TLS MITM relay
+### Device discovery
 
-- Generates a self-signed x509 server certificate (RSA-2048, `cn=Cast Device, o=Google Inc.`, SANs for `localhost`, `*.local`, `chromecast.local`, and the detected LAN IP) so Chrome accepts the TLS handshake. The outbound connection to the physical TV skips certificate verification (`InsecureSkipVerify`) rather than presenting client certificates.
-- Intercepts `urn:x-cast:com.google.cast.media` `LOAD` messages to rewrite media stream URLs through the local proxy before forwarding to the physical receiver.
-- Answers the sender's heartbeat PINGs locally (PING → PONG) and keeps the TV session alive with its own heartbeat pings; all other namespaces — including device auth and receiver/media messages — are forwarded transparently.
+Runs over mDNS (UDP 5353): origin-caster scans `_googlecast._tcp` to find the physical TV. If the TV cannot be found (or is on another subnet), point at it directly with `-tv-ip`.
+
+### Device controller
+
+- Talks Cast V2 directly to the physical TV over TLS (skipping certificate verification - the TV presents a Google Cast certificate that the controller is not expected to validate).
+- Runs the receiver lifecycle itself: `CONNECT` -> `LAUNCH` (default media receiver, `CC1AD845`) -> `CONNECT` to the app transport -> `LOAD` with the media URL rewritten through the local proxy.
+- Answers its own heartbeats and polls media status so the dashboard can show live playback state.
 
 ### HLS / AES-128 playlist rewriter
 
 - Intercepts master manifests and media playlists (`.m3u8`).
 - Rewrites segment URIs, variant stream URLs, subtitles, and audio tracks to proxy endpoints (`/proxy?url=...`).
-- Rewrites `#EXT-X-KEY` decryption URIs so physical receivers fetch AES-128 keys through the proxy using the browser's credentials.
+- Rewrites `#EXT-X-KEY` decryption URIs so physical receivers fetch AES-128 keys through the proxy using the browser's request headers.
 - Handles disguised chunk streams (e.g. `.png` disguised TS/AAC chunks).
-
-For a beginner-friendly explanation of why this exists, see [Media proxy](#media-proxy).
