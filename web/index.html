@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>origin-caster</title>
+
+<!-- Google Fonts & Material Symbols -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+
+<!-- Material Design 3 Lit Web Components CDN -->
+<script type="importmap">
+{
+  "imports": {
+    "@material/web/": "https://esm.run/@material/web/"
+  }
+}
+</script>
+<script type="module">
+  import '@material/web/all.js';
+</script>
+
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div class="app-container">
+  <!-- Top App Bar -->
+  <div class="m3-app-bar">
+    <div class="m3-brand">
+      <span class="material-symbols-outlined">cast_connected</span>
+      <span class="m3-title-text">origin-caster</span>
+    </div>
+    <div class="m3-device-badge">
+      <span class="pulse-dot"></span>
+      <span id="target-name">Discovering Receiver...</span>
+    </div>
+  </div>
+
+  <!-- Dashboard 2-Column Responsive Grid -->
+  <div class="dashboard-grid">
+    <!-- Left Column: Active Player & Manual Injection -->
+    <div class="column-stack">
+      <!-- Hero Now Playing Card -->
+      <div class="now-playing-hero">
+        <div class="m3-card-header">
+          <div class="track-meta" style="margin-bottom:0; flex:1; min-width:180px;">
+            <div class="track-title" id="now-title">No Active Stream</div>
+            <div class="track-subtitle" id="now-sub">
+              <span class="material-symbols-outlined" style="font-size:16px;">tv</span>
+              <span>Ready • Waiting for stream playback</span>
+            </div>
+          </div>
+          <div id="live-chip" class="m3-status-chip chip-idle">STANDBY</div>
+        </div>
+
+        <!-- Timeline Scrubber -->
+        <div class="timeline-container">
+          <span class="time-text" id="time-cur">00:00</span>
+          <div class="slider-flex">
+            <md-slider id="seek-slider" min="0" max="100" value="0" aria-label="Seek track position"></md-slider>
+          </div>
+          <span class="time-text time-text-right" id="time-dur">00:00</span>
+        </div>
+
+        <!-- Transport Controls -->
+        <div class="transport-row">
+          <md-icon-button id="btn-rewind30" title="Rewind 30 seconds">
+            <span class="material-symbols-outlined">replay_30</span>
+          </md-icon-button>
+          <md-icon-button id="btn-rewind10" title="Rewind 10 seconds">
+            <span class="material-symbols-outlined">replay_10</span>
+          </md-icon-button>
+          
+          <md-filled-icon-button id="btn-play-pause" class="btn-play-hero" title="Play or Pause">
+            <span class="material-symbols-outlined icon-play" id="icon-play-pause">play_arrow</span>
+          </md-filled-icon-button>
+          
+          <md-icon-button id="btn-forward10" title="Forward 10 seconds">
+            <span class="material-symbols-outlined">forward_10</span>
+          </md-icon-button>
+          <md-icon-button id="btn-forward30" title="Forward 30 seconds">
+            <span class="material-symbols-outlined">forward_30</span>
+          </md-icon-button>
+          <md-icon-button id="btn-stop" title="Stop playback">
+            <span class="material-symbols-outlined">stop</span>
+          </md-icon-button>
+        </div>
+
+        <!-- Volume Bar -->
+        <div class="volume-row">
+          <md-icon-button id="btn-mute" title="Toggle Mute">
+            <span class="material-symbols-outlined" id="icon-mute">volume_up</span>
+          </md-icon-button>
+          <md-slider id="vol-slider" min="0" max="1" step="0.01" value="1.0" aria-label="Receiver volume level" style="max-width:180px;"></md-slider>
+          <span class="time-text time-text-right" id="vol-text" style="min-width:36px;">100%</span>
+        </div>
+      </div>
+
+      <!-- Manual Stream Dispatcher Card -->
+      <div class="m3-card">
+        <div class="m3-section-title">Manual Stream Injection</div>
+        <div class="m3-help-text">Directly cast an HLS (.m3u8), DASH (.mpd), or MP4 video URL to the TV.</div>
+        <form id="castForm" class="form-grid">
+          <md-outlined-text-field label="Media Stream URL" id="url" name="url" required placeholder="https://cdn.example.com/live/index.m3u8">
+            <span class="material-symbols-outlined" slot="leading-icon">link</span>
+          </md-outlined-text-field>
+
+          <md-outlined-text-field label="Media Title (Optional)" id="title" name="title" placeholder="My Video Title">
+            <span class="material-symbols-outlined" slot="leading-icon">movie</span>
+          </md-outlined-text-field>
+
+          <details class="m3-accordion">
+            <summary>Advanced Anti-Hotlinking Headers (Optional)</summary>
+            <div class="m3-help-text" style="margin-top:0.4rem;">Forward custom HTTP headers to the upstream CDN to bypass token protection.</div>
+            <div class="accordion-content">
+              <md-outlined-text-field label="Referer Header" id="referer" name="referer" placeholder="https://provider.example.com/embed/player"></md-outlined-text-field>
+              <md-outlined-text-field label="Origin Header" id="origin" name="origin" placeholder="https://provider.example.com"></md-outlined-text-field>
+              <md-outlined-text-field label="Session Cookies" id="cookies" name="cookies" placeholder="auth_token=xyz; session=123"></md-outlined-text-field>
+              <md-outlined-text-field label="Start Offset (Seconds)" id="startTime" name="startTime" type="number" min="0" placeholder="0"></md-outlined-text-field>
+            </div>
+          </details>
+
+          <md-filled-button type="submit" style="margin-top:0.2rem;">
+            <span class="material-symbols-outlined" slot="icon">send</span>
+            Cast Stream to TV
+          </md-filled-button>
+        </form>
+        <div id="toast"></div>
+      </div>
+    </div>
+
+    <!-- Right Column: Browser Extractor & Live Telemetry -->
+    <div class="column-stack">
+      <!-- Browser Stream Extractor Card -->
+      <div class="m3-card">
+        <div class="m3-section-title">Browser Stream Extractor</div>
+        <div class="m3-help-text">Extracts video URLs, session cookies, and authorization headers from your browser tab to cast directly to the TV.</div>
+        
+        <div class="step-list">
+          <div class="step-item">
+            <span class="step-num">1</span>
+            <div class="step-text">Open Chrome DevTools (<strong>F12</strong> or <strong>Cmd+Option+I</strong>) on any streaming video tab and switch to the <strong>Console</strong>.</div>
+          </div>
+          <div class="step-item">
+            <span class="step-num">2</span>
+            <div class="step-text"><strong>Select Player Frame:</strong> If the video is inside an embedded player, switch the Console context dropdown from <code>top</code> to the player <code>&lt;iframe&gt;</code>.</div>
+          </div>
+          <div class="step-item">
+            <span class="step-num">3</span>
+            <div class="step-text">Click the button below, paste into the Console, and press <strong>Enter</strong>:</div>
+          </div>
+        </div>
+
+        <div class="extractor-action-bar">
+          <md-filled-button id="btn-copy-snippet" onclick="copyOneLiner()" style="width:100%;">
+            <span class="material-symbols-outlined" slot="icon">content_copy</span>
+            Copy Extraction Snippet
+          </md-filled-button>
+        </div>
+      </div>
+
+      <!-- Live Proxy Telemetry Grid -->
+      <div class="m3-card">
+        <div class="m3-section-title">Proxy Telemetry</div>
+        <div class="m3-help-text">Real-time metrics for media traffic forwarded through origin-caster to your receiver.</div>
+        <div class="telemetry-grid">
+          <div class="telemetry-tile">
+            <span class="telemetry-label">Requests</span>
+            <span class="telemetry-value" id="stat-requests">0</span>
+            <span class="telemetry-help">Total upstream playlist and chunk requests handled.</span>
+          </div>
+          <div class="telemetry-tile">
+            <span class="telemetry-label">Active Streams</span>
+            <span class="telemetry-value" id="stat-streams">0</span>
+            <span class="telemetry-help">Concurrent media streams currently relaying data.</span>
+          </div>
+          <div class="telemetry-tile">
+            <span class="telemetry-label">M3U8 Rewrites</span>
+            <span class="telemetry-value" id="stat-m3u8">0</span>
+            <span class="telemetry-help">HLS playlists rewritten to route segments via proxy.</span>
+          </div>
+          <div class="telemetry-tile">
+            <span class="telemetry-label">Data Relayed</span>
+            <span class="telemetry-value" id="stat-bytes">0.00 MB</span>
+            <span class="telemetry-help">Total media payload transferred from origin to TV.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

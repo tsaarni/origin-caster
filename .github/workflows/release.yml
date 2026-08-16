@@ -1,0 +1,58 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history so `gh release create --generate-notes` can diff
+          # against the previous tag when generating release notes.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build canonical binary (make build → bin/)
+        run: make build
+
+      - name: Cross-compile binaries
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # CGO_ENABLED=0: pure Go, statically linked, no C toolchain needed
+          # for cross-compilation. -ldflags "-s -w" strips debug info to
+          # shrink the binaries. The per-platform artifacts go to dist/; the
+          # canonical local build (make build) lands in bin/ (gitignored).
+          for target in "darwin amd64" "darwin arm64" "linux amd64" "linux arm64" "windows amd64" "windows arm64"; do
+            os=${target% *}
+            arch=${target#* }
+            ext=""
+            [[ $os == windows ]] && ext=".exe"
+            echo "== $os/$arch =="
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch \
+              go build -trimpath -ldflags "-s -w" \
+              -o "dist/origin-caster-${os}-${arch}${ext}" ./cmd/origin-caster
+          done
+          (cd dist && shasum -a 256 origin-caster-* > SHA256SUMS)
+          ls -lh dist/
+
+      - name: Create Release
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release delete "$GITHUB_REF_NAME" --yes
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
