@@ -42,12 +42,19 @@
   function resolveUrl(u) {
     try { return new URL(u, location.href).href; } catch (e) { return ''; }
   }
+  function isDisguisedPng(u) {
+    if (!u || typeof u !== 'string') return false;
+    const base = u.split('#')[0].split('?')[0];
+    const filename = base.substring(base.lastIndexOf('/') + 1);
+    if (/x\d+\.png$/i.test(filename) || /icon|logo|favicon|splash|poster|banner|thumb/i.test(base)) return false;
+    return /^(?:seg[-_]?|chunk[-_]?)?\d{3,}\.png$/i.test(filename);
+  }
   function isManifest(u) {
     return /\.m3u8($|\?)/i.test(u) || /\.mpd($|\?)/i.test(u);
   }
   function isSegment(u) {
     return /\.ts($|\?)/i.test(u) || /\.m4s($|\?)/i.test(u) || /\.aac($|\?)/i.test(u)
-        || /\.mp3($|\?)/i.test(u) || /init\.mp4/i.test(u) || /\d{3,}\.(mp4|ts|png)(\?|$)/i.test(u);
+        || /\.mp3($|\?)/i.test(u) || /init\.mp4/i.test(u) || isDisguisedPng(u) || /\d{3,}\.(mp4|ts)(\?|$)/i.test(u);
   }
   function typeFromUrl(u) {
     if (/\.m3u8/i.test(u)) return 'application/x-mpegurl';
@@ -102,9 +109,9 @@
       const mine = performance.getEntriesByType('resource')
         .map(function(r) { return r.name; })
         .filter(function(u) {
-          if (!/(\.m3u8|\.mpd|\.mp4|\.ts|\.flv|\.m4s|\d{3,}\.png)/i.test(u)) return false;
-          if (/\d{3,}\.png/i.test(u)) return true;                       // disguised TS chunk
+          if (isDisguisedPng(u)) return true;                           // disguised TS chunk
           if (/(\.css|\.js|\.json|\.woff2?|\.svg|\.jpe?g|\.webp|\.gif|\.png)(\?|$)/i.test(u)) return false;
+          if (!/(\.m3u8|\.mpd|\.mp4|\.ts|\.flv|\.m4s)/i.test(u)) return false;
           return true;
         })
         .reverse();                                                      // newest first
@@ -185,18 +192,65 @@
     return null;
   }
 
+  function detectReactFiber(v) {
+    if (!v) return null;
+    let fiberKey = '';
+    try {
+      fiberKey = Object.keys(v).find(function(k) {
+        return k.indexOf('__reactFiber') === 0 || k.indexOf('__reactInternalInstance') === 0;
+      }) || '';
+    } catch (e) {}
+    if (!fiberKey) return null;
+
+    let fiber = v[fiberKey];
+    let depth = 0;
+    while (fiber && depth < 40) {
+      let state = fiber.memoizedState;
+      while (state) {
+        const s = state.memoizedState;
+        if (s && typeof s === 'object') {
+          if (goodUrl(s.url) && (s.type === 'hls' || s.type === 'mp4' || s.type === 'dash' || isManifest(s.url))) {
+            const t = s.type === 'hls' ? 'application/x-mpegurl' : (s.type === 'dash' ? 'application/dash+xml' : typeFromUrl(s.url));
+            return candidate(s.url, t, v.currentTime || 0, 'react-fiber', 'engine');
+          }
+          if (s.current && s.current.value && goodUrl(s.current.value.url)) {
+            const val = s.current.value;
+            const t = val.type === 'hls' ? 'application/x-mpegurl' : (val.type === 'dash' ? 'application/dash+xml' : typeFromUrl(val.url));
+            return candidate(val.url, t, v.currentTime || 0, 'react-fiber', 'engine');
+          }
+          if (Array.isArray(s.sources) && s.sources[0] && goodUrl(s.sources[0].url)) {
+            return candidate(s.sources[0].url, s.sources[0].type || typeFromUrl(s.sources[0].url), v.currentTime || 0, 'react-fiber', 'engine');
+          }
+        }
+        state = state.next;
+      }
+      if (fiber.memoizedProps) {
+        const p = fiber.memoizedProps;
+        if (goodUrl(p.src)) {
+          return candidate(p.src, p.type || typeFromUrl(p.src), v.currentTime || 0, 'react-fiber', 'engine');
+        }
+        if (p.stream && goodUrl(p.stream.url)) {
+          return candidate(p.stream.url, p.stream.type || typeFromUrl(p.stream.url), v.currentTime || 0, 'react-fiber', 'engine');
+        }
+      }
+      fiber = fiber.return;
+      depth++;
+    }
+    return null;
+  }
+
   function markActive(c, v, ctx) {
     if (c) c.fromActive = (v === ctx.active);
     return c;
   }
 
   // ── Engine reference scan (generic layer) ─────────────────────
-  // Covers hls.js / dash.js / shaka / flv.js under any brand wrapper
+  // Covers hls.js / dash.js / shaka / flv.js / react-fiber under any brand wrapper
   // (Video.js, MediaElement.js, Plyr, Clappr, Flowplayer, Kaltura, ...).
   function engineScan(ctx) {
     for (let i = 0; i < ctx.videos.length; i++) {
       const v = ctx.videos[i];
-      const c = detectHls(v) || detectDash(v) || detectShaka(v) || detectFlv(v);
+      const c = detectHls(v) || detectDash(v) || detectShaka(v) || detectFlv(v) || detectReactFiber(v);
       if (!c) continue;
       ctx.engines.push({ video: v, player: c.player, url: c.url });
       markActive(c, v, ctx);
@@ -249,7 +303,7 @@
         return candidate(u, 'video/mp4', 0, 'network', 'network');
       }
       if (/\.ts/i.test(base)) return candidate(u, 'video/mp2t', 0, 'network', 'network');
-      if (/\d{3,}\.png/i.test(u)) {
+      if (isDisguisedPng(u)) {
         // Disguised TS chunks (streamsvr-style) -> derive the playlist URL.
         return candidate(u.replace(/\/[^/]+$/, '/playlist.m3u8'), 'application/x-mpegurl', 0, 'network', 'network');
       }
@@ -631,8 +685,8 @@
       run: run,
       merge: merge,
       layers: layers,
-      utils: { goodUrl: goodUrl, resolveUrl: resolveUrl, isManifest: isManifest, isSegment: isSegment, typeFromUrl: typeFromUrl },
-      detectors: { jwSources: jwSources, jwAPI: jwAPI, videoJs: videoJs, mediaElementJs: mediaElementJs, plyr: plyr, clappr: clappr, flowPlayer: flowPlayer, bitmovin: bitmovin, theoPlayer: theoPlayer, kaltura: kaltura, engineScan: engineScan, html5Video: html5Video, networkScan: networkScan, detectHls: detectHls, detectDash: detectDash, detectShaka: detectShaka, detectFlv: detectFlv }
+      utils: { goodUrl: goodUrl, resolveUrl: resolveUrl, isManifest: isManifest, isSegment: isSegment, isDisguisedPng: isDisguisedPng, typeFromUrl: typeFromUrl },
+      detectors: { jwSources: jwSources, jwAPI: jwAPI, videoJs: videoJs, mediaElementJs: mediaElementJs, plyr: plyr, clappr: clappr, flowPlayer: flowPlayer, bitmovin: bitmovin, theoPlayer: theoPlayer, kaltura: kaltura, engineScan: engineScan, html5Video: html5Video, networkScan: networkScan, detectHls: detectHls, detectDash: detectDash, detectShaka: detectShaka, detectFlv: detectFlv, detectReactFiber: detectReactFiber }
     };
   }
 

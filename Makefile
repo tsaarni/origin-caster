@@ -48,7 +48,7 @@ list: build
 
 ## run: Build and run
 run: build
-	./$(BUILD_DIR)/$(BINARY_NAME)
+	rm -f logs.jsonl && ./$(BUILD_DIR)/$(BINARY_NAME) -v -log-file logs.jsonl
 
 ## chrome-dev: Launch an isolated, separate Chrome instance with remote DevTools enabled (port 9222)
 chrome-dev:
@@ -64,6 +64,7 @@ chrome-dev:
 		--user-data-dir="$(CHROME_DEV_PROFILE)" \
 		--no-first-run \
 		--no-default-browser-check \
+		about:blank \
 		> /dev/null 2>&1 &
 	@echo "✓ Chrome Dev instance launched with isolated profile at $(CHROME_DEV_PROFILE)"
 	@echo "✓ Remote DevTools listening on http://127.0.0.1:$(CHROME_DEBUG_PORT)"

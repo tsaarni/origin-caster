@@ -214,6 +214,41 @@ test('engine scan: flv.js is detected but flagged unsupported', () => {
   assert.ok(snap.unsupported && snap.unsupported.player === 'flv.js');
 });
 
+test('engine scan: React Fiber internal state / ref extraction', () => {
+  const v = makeVideo({
+    currentTime: 42,
+    __reactFiber$test: {
+      memoizedState: {
+        memoizedState: {
+          current: {
+            value: {
+              type: 'hls',
+              url: 'https://workers.dev/?payload=test12345&headers=test'
+            }
+          }
+        },
+        next: null
+      }
+    }
+  });
+  const w = makeEnv({ videos: [v] });
+  const c = w.__OC__.detectors.engineScan(w.__OC__.snapshot());
+  assert.equal(c.player, 'react-fiber');
+  assert.equal(c.url, 'https://workers.dev/?payload=test12345&headers=test');
+  assert.equal(c.type, 'application/x-mpegurl');
+  assert.equal(c.time, 42);
+});
+
+test('snapshot and network scan reject dimensioned icons/splash and keep true disguised chunks', () => {
+  const w = makeEnv();
+  assert.ok(!w.__OC__.utils.isDisguisedPng('https://site.example/android-chrome-192x192.png'));
+  assert.ok(!w.__OC__.utils.isDisguisedPng('https://site.example/favicon-32x32.png'));
+  assert.ok(!w.__OC__.utils.isDisguisedPng('https://site.example/splash_screens/1920x1080.png'));
+  assert.ok(!w.__OC__.utils.isDisguisedPng('https://site.example/assets/icon-512.png'));
+  assert.ok(w.__OC__.utils.isDisguisedPng('https://site.example/live/12345.png'));
+  assert.ok(w.__OC__.utils.isDisguisedPng('https://site.example/hls/seg-001.png'));
+});
+
 // ── Player layer ────────────────────────────────────────────────
 test('JW Player: window.sources global', () => {
   const w = makeEnv({ globals: { sources: [{ file: 'https://cdn.example.com/jw.m3u8', type: 'application/x-mpegurl' }] } });
