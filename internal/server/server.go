@@ -252,7 +252,7 @@ func (s *Server) handleAPIStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	stats := s.mediaProxy.Stats()
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"total_requests": stats.TotalRequests,
 		"total_bytes":    stats.TotalBytesServed,
 		"active_streams": stats.ActiveStreams,
@@ -345,7 +345,7 @@ func (s *Server) handleAPICast(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+	_ = json.NewEncoder(w).Encode(map[string]any{
 		"status":  "success",
 		"message": "Casting initiated to TV",
 		"url":     req.URL,
@@ -369,7 +369,7 @@ func (s *Server) handleAPIPlay(w http.ResponseWriter, r *http.Request) {
 		_ = ctrl.Play()
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "action": "play"})
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "action": "play"})
 }
 
 func (s *Server) handleAPIPause(w http.ResponseWriter, r *http.Request) {
@@ -381,7 +381,7 @@ func (s *Server) handleAPIPause(w http.ResponseWriter, r *http.Request) {
 		_ = ctrl.Pause()
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "action": "pause"})
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "action": "pause"})
 }
 
 func (s *Server) handleAPIStop(w http.ResponseWriter, r *http.Request) {
@@ -393,7 +393,7 @@ func (s *Server) handleAPIStop(w http.ResponseWriter, r *http.Request) {
 		_ = ctrl.Stop()
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "action": "stop"})
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "action": "stop"})
 }
 
 func (s *Server) handleAPISeek(w http.ResponseWriter, r *http.Request) {
@@ -441,7 +441,7 @@ func (s *Server) handleAPISeek(w http.ResponseWriter, r *http.Request) {
 		_ = ctrl.Seek(targetSec)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "currentTime": targetSec})
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "currentTime": targetSec})
 }
 
 func (s *Server) handleAPIVolume(w http.ResponseWriter, r *http.Request) {
@@ -470,7 +470,7 @@ func (s *Server) handleAPIVolume(w http.ResponseWriter, r *http.Request) {
 		_ = ctrl.SetVolume(lvl, muted)
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok", "level": lvl, "muted": muted})
+	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "level": lvl, "muted": muted})
 }
 
 // handleDashboard serves the embedded web dashboard (index.html).

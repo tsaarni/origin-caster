@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"strings"
@@ -170,7 +171,7 @@ func (c *DeviceController) handleIncomingMessage(msg *castproto.CastMessage) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := json.Unmarshal([]byte(*msg.PayloadUtf8), &raw); err != nil {
 		return
 	}
@@ -178,8 +179,8 @@ func (c *DeviceController) handleIncomingMessage(msg *castproto.CastMessage) {
 	msgType, _ := raw["type"].(string)
 	switch msgType {
 	case "RECEIVER_STATUS":
-		if status, ok := raw["status"].(map[string]interface{}); ok {
-			if vol, ok := status["volume"].(map[string]interface{}); ok {
+		if status, ok := raw["status"].(map[string]any); ok {
+			if vol, ok := status["volume"].(map[string]any); ok {
 				if lvl, ok := vol["level"].(float64); ok {
 					c.state.VolumeLevel = lvl
 				}
@@ -187,8 +188,8 @@ func (c *DeviceController) handleIncomingMessage(msg *castproto.CastMessage) {
 					c.state.Muted = muted
 				}
 			}
-			if apps, ok := status["applications"].([]interface{}); ok && len(apps) > 0 {
-				if app, ok := apps[0].(map[string]interface{}); ok {
+			if apps, ok := status["applications"].([]any); ok && len(apps) > 0 {
+				if app, ok := apps[0].(map[string]any); ok {
 					if tid, ok := app["transportId"].(string); ok {
 						c.transportID = tid
 					}
@@ -210,8 +211,8 @@ func (c *DeviceController) handleIncomingMessage(msg *castproto.CastMessage) {
 		}
 
 	case "MEDIA_STATUS":
-		if statusList, ok := raw["status"].([]interface{}); ok && len(statusList) > 0 {
-			if status, ok := statusList[0].(map[string]interface{}); ok {
+		if statusList, ok := raw["status"].([]any); ok && len(statusList) > 0 {
+			if status, ok := statusList[0].(map[string]any); ok {
 				if msID, ok := status["mediaSessionId"].(float64); ok {
 					c.mediaSession = int(msID)
 					c.state.MediaSessionID = int(msID)
@@ -222,14 +223,14 @@ func (c *DeviceController) handleIncomingMessage(msg *castproto.CastMessage) {
 				if ct, ok := status["currentTime"].(float64); ok {
 					c.state.CurrentTime = ct
 				}
-				if media, ok := status["media"].(map[string]interface{}); ok {
+				if media, ok := status["media"].(map[string]any); ok {
 					if dur, ok := media["duration"].(float64); ok {
 						c.state.Duration = dur
 					}
 					if cid, ok := media["contentId"].(string); ok {
 						c.state.ContentID = cid
 					}
-					if meta, ok := media["metadata"].(map[string]interface{}); ok {
+					if meta, ok := media["metadata"].(map[string]any); ok {
 						if title, ok := meta["title"].(string); ok {
 							c.state.Title = title
 						}
@@ -242,7 +243,6 @@ func (c *DeviceController) handleIncomingMessage(msg *castproto.CastMessage) {
 	}
 }
 
-
 // CastMedia launches Default Media Receiver and streams the given request through the proxy.
 func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 	if err := c.EnsureConnection(); err != nil {
@@ -252,16 +252,12 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 	// Consolidate headers
 	headersMap := make(map[string]string)
 	if req.Headers != nil {
-		for k, v := range req.Headers {
-			headersMap[k] = v
-		}
+		maps.Copy(headersMap, req.Headers)
 	}
 	if req.RawHeaders != "" {
 		var rawH map[string]string
 		if json.Unmarshal([]byte(req.RawHeaders), &rawH) == nil {
-			for k, v := range rawH {
-				headersMap[k] = v
-			}
+			maps.Copy(headersMap, rawH)
 		}
 	}
 	if req.Cookies != "" && headersMap["Cookie"] == "" {
@@ -270,7 +266,6 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 	if req.UserAgent != "" && headersMap["User-Agent"] == "" {
 		headersMap["User-Agent"] = req.UserAgent
 	}
-
 
 	// Resolve relative URLs
 	req.URL = proxy.ResolveMediaURL(req.URL, req.Origin, req.Referer)
@@ -284,7 +279,7 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 	c.mu.Unlock()
 
 	// Wait for RECEIVER_STATUS response to populate sessionID
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		time.Sleep(100 * time.Millisecond)
 		c.mu.Lock()
 		sid := c.sessionID
@@ -308,7 +303,7 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 		c.sessionID = ""
 		c.mu.Unlock()
 		// Wait for the STOP to take effect; also wait for RECEIVER_STATUS with empty applications
-		for i := 0; i < 15; i++ {
+		for range 15 {
 			time.Sleep(200 * time.Millisecond)
 			c.mu.Lock()
 			sid := c.sessionID
@@ -337,7 +332,7 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 	// Wait up to 30s for transport ID from RECEIVER_STATUS (Android TV can take 15-20s)
 	var tid, sid string
 	var conn net.Conn
-	for i := 0; i < 150; i++ {
+	for range 150 {
 		time.Sleep(200 * time.Millisecond)
 		c.mu.Lock()
 		tid = c.transportID
@@ -371,17 +366,17 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 	}
 
 	loadReqID := c.nextRequestID()
-	loadPayload := map[string]interface{}{
+	loadPayload := map[string]any{
 		"type":        "LOAD",
 		"requestId":   loadReqID,
 		"sessionId":   sid,
 		"autoplay":    true,
 		"currentTime": req.CurrentTime,
-		"media": map[string]interface{}{
+		"media": map[string]any{
 			"contentId":   proxyURL,
 			"streamType":  "BUFFERED",
 			"contentType": contentType,
-			"metadata": map[string]interface{}{
+			"metadata": map[string]any{
 				"type":         0,
 				"metadataType": 0,
 				"title":        title,
@@ -562,7 +557,7 @@ func (c *DeviceController) sendMediaCommand(cmdJSON string) error {
 		return errors.New("not connected")
 	}
 
-	var raw map[string]interface{}
+	var raw map[string]any
 	if err := json.Unmarshal([]byte(cmdJSON), &raw); err != nil {
 		return err
 	}
