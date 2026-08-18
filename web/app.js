@@ -13,8 +13,7 @@ let isMuted = false;
 // startup (from cast.js). The cast is sent with window.open() - a top-level
 // navigation, which is exempt from CORS/PNA/LNA - to /api/cast, which answers
 // with an auto-closing HTML page for navigations and JSON for API clients
-// (content negotiation).
-const ONELINER_SNIPPET_CORE = '/*__SNIPPET__*/';
+const ONELINER_SNIPPET_CORE = /*__SNIPPET__*/;
 
 // __BASE__ is replaced with the dashboard's own origin when the page loads.
 const ONELINER_SNIPPET = ONELINER_SNIPPET_CORE.replace('__BASE__', location.origin);

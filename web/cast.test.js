@@ -499,3 +499,32 @@ test('end-to-end: hls.js site casts with referer/origin/cookies', () => {
   assert.equal(param(w, 'cookies'), 'session=abc');
   assert.equal(param(w, 'title'), 'Test Page');
 });
+
+// ── Dashboard app.js & snippet injection sanity ─────────────────
+test('app.js: snippet core injection, origin replacement, and clipboard copy', () => {
+  const APP_SOURCE = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
+  // Simulate Go server-side json.Marshal injection
+  const injectedApp = APP_SOURCE.replace('/*__SNIPPET__*/', JSON.stringify(SOURCE));
+
+  let copiedText = '';
+  const appSandbox = {
+    location: { origin: 'http://127.0.0.1:8888', href: 'http://127.0.0.1:8888/' },
+    document: { getElementById: () => null, title: 'origin-caster' },
+    navigator: {
+      clipboard: {
+        writeText: (txt) => { copiedText = txt; return Promise.resolve(); }
+      }
+    },
+    fetch: () => Promise.resolve({ ok: true, json: () => Promise.resolve({}) }),
+    setInterval: () => {},
+    alert: () => {},
+  };
+  appSandbox.window = appSandbox;
+
+  const ctx = vm.createContext(appSandbox);
+  vm.runInContext(injectedApp.replace(/export\s+/g, ''), ctx);
+
+  assert.ok(typeof appSandbox.copyOneLiner === 'function', 'copyOneLiner must be defined');
+  appSandbox.copyOneLiner();
+  assert.ok(copiedText.includes('http://127.0.0.1:8888/api/cast?'), 'origin interpolated in copied snippet');
+});

@@ -176,34 +176,18 @@ func (s *Server) handleAppJS(w http.ResponseWriter, r *http.Request) {
 		snippet, err := minifiedSnippet()
 		if err != nil {
 			slog.Error("Snippet minification failed", "error", err)
-			castScript, aerr := web.Asset("cast.js")
-			if aerr != nil {
-				http.Error(w, "cast.js not found", http.StatusInternalServerError)
-				return
-			}
-			snippet = string(castScript) // fall back to the readable script (multi-line)
+			http.Error(w, "snippet minification failed", http.StatusInternalServerError)
+			return
 		}
-		body = strings.Replace(body, "/*__SNIPPET__*/", escapeJSString(snippet), 1)
+		encoded, err := json.Marshal(snippet)
+		if err != nil {
+			slog.Error("Snippet JSON encoding failed", "error", err)
+			http.Error(w, "snippet encoding failed", http.StatusInternalServerError)
+			return
+		}
+		body = strings.Replace(body, "/*__SNIPPET__*/", string(encoded), 1)
 	}
 	_, _ = w.Write([]byte(body))
-}
-
-// escapeJSString escapes a string for embedding in a single-quoted JS string
-// literal.
-func escapeJSString(s string) string {
-	var b strings.Builder
-	b.Grow(len(s) + 8)
-	for _, r := range s {
-		switch r {
-		case '\\':
-			b.WriteString(`\\`)
-		case '\'':
-			b.WriteString(`\'`)
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // castRequestFromForm builds a CastRequest from URL-encoded form values.

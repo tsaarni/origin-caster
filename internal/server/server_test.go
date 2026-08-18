@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -21,15 +22,33 @@ func TestAppJSServesGeneratedSnippet(t *testing.T) {
 	if strings.Contains(body, "/*__SNIPPET__*/") {
 		t.Fatal("placeholder not substituted")
 	}
-	if !strings.Contains(body, "ONELINER_SNIPPET_CORE = '(function(){") {
-		t.Fatal("minified snippet not injected")
+	snippet, _ := minifiedSnippet()
+	t.Logf("Generated snippet size: %d bytes", len(snippet))
+	if !strings.Contains(body, "ONELINER_SNIPPET_CORE = \"") && !strings.Contains(body, "ONELINER_SNIPPET_CORE = '") {
+		t.Fatal("minified snippet assignment not injected")
 	}
 	if !strings.Contains(body, "__BASE__/api/cast?") {
 		t.Fatal("base placeholder missing from snippet")
 	}
-	// the injected snippet must be a single line (no newline before the IIFE body)
-	if strings.Contains(body, "ONELINER_SNIPPET_CORE = '(function(){\n") {
-		t.Fatal("snippet should be single-line")
+
+	// Verify that the injected string is a syntactically valid JSON string literal (pure Go)
+	idx := strings.Index(body, "const ONELINER_SNIPPET_CORE = ")
+	if idx == -1 {
+		t.Fatal("ONELINER_SNIPPET_CORE assignment not found")
+	}
+	stmt := body[idx+len("const ONELINER_SNIPPET_CORE = "):]
+	lineEndIdx := strings.Index(stmt, "\n")
+	if lineEndIdx == -1 {
+		lineEndIdx = len(stmt)
+	}
+	jsonStr := strings.TrimSpace(stmt[:lineEndIdx])
+	jsonStr = strings.TrimSuffix(jsonStr, ";")
+	var decoded string
+	if err := json.Unmarshal([]byte(jsonStr), &decoded); err != nil {
+		t.Fatalf("injected snippet literal is not valid JSON/JS string: %v\nJSON excerpt: %s", err, jsonStr[:min(100, len(jsonStr))])
+	}
+	if !strings.Contains(decoded, "__BASE__/api/cast?") {
+		t.Fatal("decoded snippet does not contain __BASE__/api/cast?")
 	}
 }
 
