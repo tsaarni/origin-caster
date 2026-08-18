@@ -242,19 +242,6 @@ func (c *DeviceController) handleIncomingMessage(msg *castproto.CastMessage) {
 	}
 }
 
-// CastRequest holds full media URL and custom authentication headers/cookies.
-type CastRequest struct {
-	URL         string            `json:"url"`
-	Title       string            `json:"title,omitempty"`
-	Origin      string            `json:"origin,omitempty"`
-	Referer     string            `json:"referer,omitempty"`
-	Cookies     string            `json:"cookies,omitempty"`
-	UserAgent   string            `json:"userAgent,omitempty"`
-	CurrentTime float64           `json:"currentTime,omitempty"`
-	ContentType string            `json:"contentType,omitempty"`
-	Headers     map[string]string `json:"headers,omitempty"`
-	RawHeaders  string            `json:"rawHeaders,omitempty"`
-}
 
 // CastMedia launches Default Media Receiver and streams the given request through the proxy.
 func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
@@ -284,12 +271,6 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 		headersMap["User-Agent"] = req.UserAgent
 	}
 
-	var headersJSON string
-	if len(headersMap) > 0 {
-		if b, err := json.Marshal(headersMap); err == nil {
-			headersJSON = string(b)
-		}
-	}
 
 	// Resolve relative URLs
 	req.URL = proxy.ResolveMediaURL(req.URL, req.Origin, req.Referer)
@@ -379,7 +360,7 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 	_ = castproto.WriteFramedMessage(conn, appConnect)
 
 	// 4. Build proxied URL
-	proxyURL := c.httpProxy.BuildProxyURL(req.URL, req.Origin, req.Referer, headersJSON)
+	proxyURL := c.httpProxy.BuildProxyURL(req.URL)
 	slog.Info("Initiating playback via proxy URL", "url", req.URL, "proxyURL", proxyURL)
 
 	contentType := normalizeContentType(req.ContentType, req.URL, headersMap)

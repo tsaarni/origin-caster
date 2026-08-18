@@ -42,7 +42,7 @@ Port 8888 must be reachable from both your browser and the TV.
 │   ├── castproto/           # Cast V2 wire framing + protobuf encode/decode
 │   ├── controller/          # Direct device controller (Cast V2 client to the TV)
 │   ├── mdns/                # mDNS discovery scanner for the physical TV
-│   ├── proxy/               # Media proxy: upstream fetch, header injection, HLS rewriter
+│   ├── proxy/               # Media proxy: upstream fetch, header forwarding, HLS rewriter
 │   ├── server/              # Web dashboard, REST API, snippet serving (mounts the proxy)
 │   └── netutil/             # LAN IP detection
 ├── web/                     # Public web content & browser snippet (embedded via web/embed.go)

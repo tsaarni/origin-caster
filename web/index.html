@@ -42,7 +42,7 @@
 
   <!-- Dashboard 2-Column Responsive Grid -->
   <div class="dashboard-grid">
-    <!-- Left Column: Active Player & Manual Injection -->
+    <!-- Left Column: Active Player & Manual Cast -->
     <div class="column-stack">
       <!-- Hero Now Playing Card -->
       <div class="now-playing-hero">
@@ -100,9 +100,9 @@
         </div>
       </div>
 
-      <!-- Manual Stream Dispatcher Card -->
+      <!-- Manual Stream Casting Card -->
       <div class="m3-card">
-        <div class="m3-section-title">Manual Stream Injection</div>
+        <div class="m3-section-title">Manual Stream Casting</div>
         <div class="m3-help-text">Directly cast an HLS (.m3u8), DASH (.mpd), or MP4 video URL to the TV.</div>
         <form id="castForm" class="form-grid">
           <md-outlined-text-field label="Media Stream URL" id="url" name="url" required placeholder="https://cdn.example.com/live/index.m3u8">
@@ -114,8 +114,8 @@
           </md-outlined-text-field>
 
           <details class="m3-accordion">
-            <summary>Advanced Anti-Hotlinking Headers (Optional)</summary>
-            <div class="m3-help-text" style="margin-top:0.4rem;">Forward custom HTTP headers to the upstream CDN to bypass token protection.</div>
+            <summary>Custom Request Headers (Optional)</summary>
+            <div class="m3-help-text" style="margin-top:0.4rem;">Forward custom HTTP headers (such as Referer, Origin, or Cookies) to the upstream media host.</div>
             <div class="accordion-content">
               <md-outlined-text-field label="Referer Header" id="referer" name="referer" placeholder="https://provider.example.com/embed/player"></md-outlined-text-field>
               <md-outlined-text-field label="Origin Header" id="origin" name="origin" placeholder="https://provider.example.com"></md-outlined-text-field>

@@ -15,7 +15,7 @@ var (
 
 // RewriteM3U8 parses an HLS manifest line by line and rewrites all segment/playlist/key URIs
 // so that the Chromecast player requests them through the local proxy server.
-func RewriteM3U8(content string, baseURL *url.URL, proxyBaseURL, origin, referer, headersJSON string) string {
+func RewriteM3U8(content string, baseURL *url.URL, proxyBaseURL string) string {
 	var output strings.Builder
 	scanner := bufio.NewScanner(strings.NewReader(content))
 
@@ -51,7 +51,7 @@ func RewriteM3U8(content string, baseURL *url.URL, proxyBaseURL, origin, referer
 					}
 
 					resolved := resolveURL(baseURL, rawURI)
-					proxyURL := buildProxyLink(proxyBaseURL, resolved, origin, referer, headersJSON)
+					proxyURL := buildProxyLink(proxyBaseURL, resolved)
 					if quoted {
 						return fmt.Sprintf(`URI="%s"`, proxyURL)
 					}
@@ -71,7 +71,7 @@ func RewriteM3U8(content string, baseURL *url.URL, proxyBaseURL, origin, referer
 
 		// Line does not start with '#', which means it is a segment or sub-playlist URI!
 		resolved := resolveURL(baseURL, line)
-		proxyURL := buildProxyLink(proxyBaseURL, resolved, origin, referer, headersJSON)
+		proxyURL := buildProxyLink(proxyBaseURL, resolved)
 		output.WriteString(proxyURL)
 		output.WriteString("\n")
 	}

@@ -91,24 +91,14 @@ func (s *Server) BaseURL() string {
 }
 
 // BuildProxyURL generates a proxy URL pointing to the given upstream target URL.
-func (s *Server) BuildProxyURL(targetURL, origin, referer, customHeadersJSON string) string {
-	return buildProxyLink(s.baseURL, targetURL, origin, referer, customHeadersJSON)
+func (s *Server) BuildProxyURL(targetURL string) string {
+	return buildProxyLink(s.baseURL, targetURL)
 }
 
-// buildProxyLink builds a /proxy endpoint URL carrying the target URL and the
-// request headers that should be added when the TV fetches it.
-func buildProxyLink(proxyBaseURL, targetURL, origin, referer, headersJSON string) string {
+// buildProxyLink builds a /proxy endpoint URL carrying the target URL.
+func buildProxyLink(proxyBaseURL, targetURL string) string {
 	q := url.Values{}
 	q.Set("url", targetURL)
-	if origin != "" {
-		q.Set("origin", origin)
-	}
-	if referer != "" {
-		q.Set("referer", referer)
-	}
-	if headersJSON != "" {
-		q.Set("headers", headersJSON)
-	}
 	return fmt.Sprintf("%s/proxy?%s", proxyBaseURL, q.Encode())
 }
 
@@ -190,8 +180,15 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	origin := r.URL.Query().Get("origin")
-	referer := r.URL.Query().Get("referer")
+	s.mu.RLock()
+	session := s.activeSession
+	s.mu.RUnlock()
+
+	var origin, referer string
+	if session != nil {
+		origin = session.Origin
+		referer = session.Referer
+	}
 
 	rawTargetURL = ResolveMediaURL(rawTargetURL, origin, referer)
 
@@ -208,10 +205,6 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mu.RLock()
-	session := s.activeSession
-	s.mu.RUnlock()
-
 	// Forward standard headers
 	if rangeHdr := r.Header.Get("Range"); rangeHdr != "" {
 		upstreamReq.Header.Set("Range", rangeHdr)
@@ -224,49 +217,44 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	ua := ""
 	if session != nil && session.UserAgent != "" {
 		ua = session.UserAgent
-	}
-	if ua == "" && r.Header.Get("User-Agent") != "" {
+	} else if r.Header.Get("User-Agent") != "" {
 		ua = r.Header.Get("User-Agent")
-	}
-	if ua == "" {
+	} else {
 		ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 	}
 	upstreamReq.Header.Set("User-Agent", ua)
 
-	// Origin injection
-	if origin == "" && session != nil && session.Origin != "" {
-		origin = session.Origin
-	}
+	// Set Origin header
 	if origin == "" {
 		origin = fmt.Sprintf("%s://%s", targetURL.Scheme, targetURL.Host)
 	}
 	upstreamReq.Header.Set("Origin", origin)
 
-	// Referer injection
-	if referer == "" && session != nil && session.Referer != "" {
-		referer = session.Referer
-	}
+	// Set Referer header
 	if referer == "" {
 		referer = fmt.Sprintf("%s://%s/", targetURL.Scheme, targetURL.Host)
 	}
 	upstreamReq.Header.Set("Referer", referer)
 
-	// Cookie injection
+	// Forward Cookie header
 	if session != nil && session.Cookies != "" && upstreamReq.Header.Get("Cookie") == "" {
 		upstreamReq.Header.Set("Cookie", session.Cookies)
 	}
 
-	// Extra custom headers
-	if headersJSON := r.URL.Query().Get("headers"); headersJSON != "" {
-		var extraHeaders map[string]string
-		if jsonErr := json.Unmarshal([]byte(headersJSON), &extraHeaders); jsonErr == nil {
-			for k, v := range extraHeaders {
+	// Forward custom headers
+	if session != nil {
+		if session.Headers != nil {
+			for k, v := range session.Headers {
 				upstreamReq.Header.Set(k, v)
 			}
 		}
-	} else if session != nil && session.Headers != nil {
-		for k, v := range session.Headers {
-			upstreamReq.Header.Set(k, v)
+		if session.RawHeaders != "" {
+			var rawH map[string]string
+			if json.Unmarshal([]byte(session.RawHeaders), &rawH) == nil {
+				for k, v := range rawH {
+					upstreamReq.Header.Set(k, v)
+				}
+			}
 		}
 	}
 
@@ -297,7 +285,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 		if bytes.HasPrefix(peekBuf[:n], []byte("#EXTM3U")) || isM3U8 {
 			atomic.AddUint64(&s.stats.M3U8Rewrites, 1)
-			s.handleM3U8(w, combinedReader, targetURL, origin, referer, r.URL.Query().Get("headers"))
+			s.handleM3U8(w, combinedReader, targetURL)
 			return
 		}
 
@@ -308,7 +296,7 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	s.streamMedia(w, resp, resp.Body, targetURL)
 }
 
-func (s *Server) handleM3U8(w http.ResponseWriter, r io.Reader, baseURL *url.URL, origin, referer, headersJSON string) {
+func (s *Server) handleM3U8(w http.ResponseWriter, r io.Reader, baseURL *url.URL) {
 	bodyBytes, err := io.ReadAll(r)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to read M3U8: %v", err), http.StatusInternalServerError)
@@ -317,7 +305,7 @@ func (s *Server) handleM3U8(w http.ResponseWriter, r io.Reader, baseURL *url.URL
 
 	slog.Debug("Original M3U8 manifest", "url", baseURL.String(), "manifest", string(bodyBytes))
 
-	rewritten := RewriteM3U8(string(bodyBytes), baseURL, s.BaseURL(), origin, referer, headersJSON)
+	rewritten := RewriteM3U8(string(bodyBytes), baseURL, s.BaseURL())
 
 	slog.Debug("M3U8 manifest rewritten", "url", baseURL.String(), "length", len(rewritten))
 

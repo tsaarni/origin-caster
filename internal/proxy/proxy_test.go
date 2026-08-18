@@ -22,20 +22,18 @@ func TestRewriteMasterM3U8(t *testing.T) {
 `
 	baseURL, _ := url.Parse("https://video.example.com/live/master.m3u8")
 	proxyBase := "http://192.168.1.100:8888"
-	origin := "https://video.example.com"
-	referer := "https://video.example.com/watch/123"
 
-	rewritten := RewriteM3U8(masterPlaylist, baseURL, proxyBase, origin, referer, "")
+	rewritten := RewriteM3U8(masterPlaylist, baseURL, proxyBase)
 
-	if !strings.Contains(rewritten, "http://192.168.1.100:8888/proxy?origin=https%3A%2F%2Fvideo.example.com&referer=https%3A%2F%2Fvideo.example.com%2Fwatch%2F123&url=https%3A%2F%2Fvideo.example.com%2Flive%2F720p%2Fprog_index.m3u8") {
+	if !strings.Contains(rewritten, "http://192.168.1.100:8888/proxy?url=https%3A%2F%2Fvideo.example.com%2Flive%2F720p%2Fprog_index.m3u8") {
 		t.Errorf("Expected rewritten 720p stream URL, got:\n%s", rewritten)
 	}
 
-	if !strings.Contains(rewritten, `URI="http://192.168.1.100:8888/proxy?origin=https%3A%2F%2Fvideo.example.com&referer=https%3A%2F%2Fvideo.example.com%2Fwatch%2F123&url=https%3A%2F%2Fvideo.example.com%2Flive%2Faudio%2Feng.m3u8"`) {
+	if !strings.Contains(rewritten, `URI="http://192.168.1.100:8888/proxy?url=https%3A%2F%2Fvideo.example.com%2Flive%2Faudio%2Feng.m3u8"`) {
 		t.Errorf("Expected rewritten audio URI, got:\n%s", rewritten)
 	}
 
-	if !strings.Contains(rewritten, `URI="http://192.168.1.100:8888/proxy?origin=https%3A%2F%2Fvideo.example.com&referer=https%3A%2F%2Fvideo.example.com%2Fwatch%2F123&url=https%3A%2F%2Fvideo.example.com%2Flive%2Fiframe.m3u8"`) {
+	if !strings.Contains(rewritten, `URI="http://192.168.1.100:8888/proxy?url=https%3A%2F%2Fvideo.example.com%2Flive%2Fiframe.m3u8"`) {
 		t.Errorf("Expected rewritten iframe URI, got:\n%s", rewritten)
 	}
 }
@@ -56,25 +54,25 @@ https://cdn.example.com/segments/segment_001.ts?token=abc
 	baseURL, _ := url.Parse("https://media.example.com/vod/stream.m3u8")
 	proxyBase := "http://192.168.1.100:8888"
 
-	rewritten := RewriteM3U8(mediaPlaylist, baseURL, proxyBase, "https://media.example.com", "https://media.example.com/play", "")
+	rewritten := RewriteM3U8(mediaPlaylist, baseURL, proxyBase)
 
 	// Verify key URI rewritten
-	if !strings.Contains(rewritten, `URI="http://192.168.1.100:8888/proxy?origin=https%3A%2F%2Fmedia.example.com&referer=https%3A%2F%2Fmedia.example.com%2Fplay&url=https%3A%2F%2Fmedia.example.com%2Fvod%2Fkeys%2Fkey.bin"`) {
+	if !strings.Contains(rewritten, `URI="http://192.168.1.100:8888/proxy?url=https%3A%2F%2Fmedia.example.com%2Fvod%2Fkeys%2Fkey.bin"`) {
 		t.Errorf("Expected rewritten KEY URI, got:\n%s", rewritten)
 	}
 
 	// Verify init map rewritten
-	if !strings.Contains(rewritten, `URI="http://192.168.1.100:8888/proxy?origin=https%3A%2F%2Fmedia.example.com&referer=https%3A%2F%2Fmedia.example.com%2Fplay&url=https%3A%2F%2Fmedia.example.com%2Fvod%2Finit.mp4"`) {
+	if !strings.Contains(rewritten, `URI="http://192.168.1.100:8888/proxy?url=https%3A%2F%2Fmedia.example.com%2Fvod%2Finit.mp4"`) {
 		t.Errorf("Expected rewritten MAP URI, got:\n%s", rewritten)
 	}
 
 	// Verify relative segment rewritten
-	if !strings.Contains(rewritten, "http://192.168.1.100:8888/proxy?origin=https%3A%2F%2Fmedia.example.com&referer=https%3A%2F%2Fmedia.example.com%2Fplay&url=https%3A%2F%2Fmedia.example.com%2Fvod%2Fsegment_000.ts") {
+	if !strings.Contains(rewritten, "http://192.168.1.100:8888/proxy?url=https%3A%2F%2Fmedia.example.com%2Fvod%2Fsegment_000.ts") {
 		t.Errorf("Expected rewritten relative segment URL, got:\n%s", rewritten)
 	}
 
 	// Verify absolute segment rewritten
-	if !strings.Contains(rewritten, "http://192.168.1.100:8888/proxy?origin=https%3A%2F%2Fmedia.example.com&referer=https%3A%2F%2Fmedia.example.com%2Fplay&url=https%3A%2F%2Fcdn.example.com%2Fsegments%2Fsegment_001.ts%3Ftoken%3Dabc") {
+	if !strings.Contains(rewritten, "http://192.168.1.100:8888/proxy?url=https%3A%2F%2Fcdn.example.com%2Fsegments%2Fsegment_001.ts%3Ftoken%3Dabc") {
 		t.Errorf("Expected rewritten absolute segment URL, got:\n%s", rewritten)
 	}
 }
@@ -109,6 +107,10 @@ func TestProxyServerEndToEnd(t *testing.T) {
 	defer upstreamServer.Close()
 
 	proxy := NewServer("http://127.0.0.1:8888")
+	proxy.SetActiveSession(CastRequest{
+		Origin:  "https://custom-referer.example.com",
+		Referer: "https://custom-referer.example.com/video",
+	})
 	proxyHandler := proxy.Handler()
 	testProxyServer := httptest.NewServer(proxyHandler)
 	defer testProxyServer.Close()
@@ -118,11 +120,9 @@ func TestProxyServerEndToEnd(t *testing.T) {
 
 	// 1. Test fetching M3U8 playlist
 	playlistTarget := upstreamServer.URL + "/playlist.m3u8"
-	reqURL := fmt.Sprintf("%s/proxy?url=%s&referer=%s&origin=%s",
+	reqURL := fmt.Sprintf("%s/proxy?url=%s",
 		testProxyServer.URL,
-		url.QueryEscape(playlistTarget),
-		url.QueryEscape("https://custom-referer.example.com/video"),
-		url.QueryEscape("https://custom-referer.example.com"))
+		url.QueryEscape(playlistTarget))
 
 	resp, err := http.Get(reqURL)
 	if err != nil {
