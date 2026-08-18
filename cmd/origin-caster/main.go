@@ -61,23 +61,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Detect the LAN IP used in the proxy URL the TV is told to fetch.
-	var localIP net.IP
-	if *lanIP != "" {
-		localIP = net.ParseIP(*lanIP)
-		if localIP == nil {
-			slog.Error("Invalid IP specified in -lan-ip", "ip", *lanIP)
-			os.Exit(1)
-		}
-	} else {
-		localIP, err = netutil.DetectLANIP()
-		if err != nil {
-			slog.Error("Failed to detect LAN address", "error", err)
-			os.Exit(1)
-		}
-	}
-	slog.Info("LAN address", "ip", localIP.String())
-
 	// Scan for physical Chromecast devices
 	discoverer := mdns.NewDiscoverer()
 	ctx := context.Background()
@@ -128,6 +111,23 @@ func main() {
 		targetDevice = target
 		slog.Info("Bound to physical receiver", "name", targetDevice.FriendlyName, "model", targetDevice.ModelName, "ip", targetDevice.IP.String(), "port", targetDevice.Port)
 	}
+
+	// Detect the LAN IP used in the proxy URL the TV is told to fetch.
+	var localIP net.IP
+	if *lanIP != "" {
+		localIP = net.ParseIP(*lanIP)
+		if localIP == nil {
+			slog.Error("Invalid IP specified in -lan-ip", "ip", *lanIP)
+			os.Exit(1)
+		}
+	} else {
+		localIP, err = netutil.DetectIPForTarget(targetDevice.IP)
+		if err != nil {
+			slog.Error("Failed to detect LAN address for target TV", "target", targetDevice.IP.String(), "error", err)
+			os.Exit(1)
+		}
+	}
+	slog.Info("LAN address", "ip", localIP.String())
 
 	// Build the base URL advertised to the TV: use the configured host, or
 	// fall back to the detected LAN IP when no host was given (':8888').
