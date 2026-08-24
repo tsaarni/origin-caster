@@ -79,6 +79,7 @@ document.getElementById('btn-rewind10')?.addEventListener('click', () => stepTim
 document.getElementById('btn-forward10')?.addEventListener('click', () => stepTime(10));
 document.getElementById('btn-forward30')?.addEventListener('click', () => stepTime(30));
 document.getElementById('btn-mute')?.addEventListener('click', toggleMute);
+document.getElementById('btn-copy-snippet')?.addEventListener('click', copyOneLiner);
 
 // Seek Slider
 const seekSlider = document.getElementById('seek-slider');
@@ -246,17 +247,24 @@ document.getElementById('castForm')?.addEventListener('submit', async (e) => {
   }
 });
 
-export function copyOneLiner() {
-  navigator.clipboard.writeText(ONELINER_SNIPPET).then(() => {
-    const btn = document.getElementById('btn-copy-snippet');
-    if (btn) {
-      const origText = btn.innerHTML;
-      btn.innerHTML = '<span class="material-symbols-outlined" slot="icon">check</span>Copied to Clipboard!';
-      setTimeout(() => { btn.innerHTML = origText; }, 2000);
-    } else {
-      alert('Copied extraction snippet to clipboard!');
-    }
-  });
+export async function copyOneLiner() {
+  try {
+    await navigator.clipboard.writeText(ONELINER_SNIPPET);
+  } catch {
+    const el = document.createElement('textarea');
+    el.value = ONELINER_SNIPPET;
+    document.body.appendChild(el);
+    el.select();
+    document.execCommand('copy');
+    el.remove();
+  }
+
+  const btn = document.getElementById('btn-copy-snippet');
+  if (btn) {
+    const origText = btn.innerHTML;
+    btn.innerHTML = '<span class="material-symbols-outlined" slot="icon">check</span>Copied to Clipboard!';
+    setTimeout(() => { btn.innerHTML = origText; }, 2000);
+  }
 }
 
 window.copyOneLiner = copyOneLiner;

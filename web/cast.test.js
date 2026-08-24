@@ -501,7 +501,7 @@ test('end-to-end: hls.js site casts with referer/origin/cookies', () => {
 });
 
 // ── Dashboard app.js & snippet injection sanity ─────────────────
-test('app.js: snippet core injection, origin replacement, and clipboard copy', () => {
+test('app.js: snippet core injection, origin replacement, and clipboard copy', async () => {
   const APP_SOURCE = fs.readFileSync(path.join(__dirname, 'app.js'), 'utf8');
   // Simulate Go server-side json.Marshal injection
   const injectedApp = APP_SOURCE.replace('/*__SNIPPET__*/', JSON.stringify(SOURCE));
@@ -525,6 +525,40 @@ test('app.js: snippet core injection, origin replacement, and clipboard copy', (
   vm.runInContext(injectedApp.replace(/export\s+/g, ''), ctx);
 
   assert.ok(typeof appSandbox.copyOneLiner === 'function', 'copyOneLiner must be defined');
-  appSandbox.copyOneLiner();
+  await appSandbox.copyOneLiner();
   assert.ok(copiedText.includes('http://127.0.0.1:8888/api/cast?'), 'origin interpolated in copied snippet');
+
+  // Test fallback when navigator.clipboard is undefined (e.g. insecure HTTP / LAN IP)
+  delete appSandbox.navigator.clipboard;
+  let fallbackCopiedText = '';
+  let execCommandCalled = false;
+  appSandbox.document.createElement = (tag) => {
+    if (tag === 'textarea') {
+      const el = {
+        style: {},
+        value: '',
+        select: () => {},
+        remove: () => { appendedChild = null; }
+      };
+      return el;
+    }
+    return {};
+  };
+  let appendedChild = null;
+  appSandbox.document.body = {
+    appendChild: (el) => { appendedChild = el; },
+    removeChild: () => { appendedChild = null; }
+  };
+  appSandbox.document.execCommand = (cmd) => {
+    if (cmd === 'copy' && appendedChild) {
+      fallbackCopiedText = appendedChild.value;
+      execCommandCalled = true;
+      return true;
+    }
+    return false;
+  };
+
+  await appSandbox.copyOneLiner();
+  assert.ok(execCommandCalled, 'document.execCommand fallback called');
+  assert.ok(fallbackCopiedText.includes('http://127.0.0.1:8888/api/cast?'), 'origin interpolated in fallback copied snippet');
 });
