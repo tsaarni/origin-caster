@@ -88,10 +88,16 @@ func (s *Server) logRequests(next http.Handler) http.Handler {
 			"path", r.URL.Path,
 			"remote", r.RemoteAddr,
 		}
-		attrs = append(attrs, s.requestLogParams(r)...)
+		if slog.Default().Enabled(r.Context(), slog.LevelDebug) {
+			attrs = append(attrs, s.requestLogParams(r)...)
+		}
 
 		slog.Debug("HTTP request", attrs...)
-		next.ServeHTTP(w, r)
+		started := time.Now()
+		response := &loggingResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(response, r)
+		attrs = append(attrs, "status", response.status, "duration", time.Since(started))
+		slog.Debug("HTTP request completed", attrs...)
 	})
 }
 
@@ -119,7 +125,10 @@ func (s *Server) requestLogParams(r *http.Request) []any {
 	if r.Method == http.MethodPost && r.Body != nil {
 		body, err := io.ReadAll(io.LimitReader(r.Body, 32<<10))
 		if err == nil {
-			r.Body = io.NopCloser(bytes.NewReader(body))
+			r.Body = struct {
+				io.Reader
+				io.Closer
+			}{io.MultiReader(bytes.NewReader(body), r.Body), r.Body}
 
 			payload := url.Values{}
 			var m map[string]any
@@ -151,7 +160,11 @@ func (s *Server) requestLogParams(r *http.Request) []any {
 
 	attrs := make([]any, 0, len(keys)*2)
 	for _, k := range keys {
-		attrs = append(attrs, k, values.Get(k))
+		v := values.Get(k)
+		if k == "url" || k == "origin" || k == "referer" {
+			v = proxy.SafeLogURL(v)
+		}
+		attrs = append(attrs, k, v)
 	}
 	return attrs
 }
@@ -302,6 +315,7 @@ func (s *Server) handleAPICast(w http.ResponseWriter, r *http.Request) {
 	s.mediaProxy.SetActiveSession(req)
 
 	if err := ctrl.CastMedia(req); err != nil {
+		slog.Error("Cast failed", "error", err)
 		http.Error(w, fmt.Sprintf("Cast failed: %v", err), http.StatusInternalServerError)
 		return
 	}
@@ -349,8 +363,14 @@ func (s *Server) handleAPIPlay(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	ctrl := s.controller
 	s.mu.RUnlock()
-	if ctrl != nil {
-		_ = ctrl.Play()
+	if ctrl == nil {
+		http.Error(w, "no receiver configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := ctrl.Play(); err != nil {
+		slog.Error("Receiver command failed", "operation", "play", "error", err)
+		http.Error(w, "Receiver command failed: "+err.Error(), http.StatusBadGateway)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "action": "play"})
@@ -361,8 +381,14 @@ func (s *Server) handleAPIPause(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	ctrl := s.controller
 	s.mu.RUnlock()
-	if ctrl != nil {
-		_ = ctrl.Pause()
+	if ctrl == nil {
+		http.Error(w, "no receiver configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := ctrl.Pause(); err != nil {
+		slog.Error("Receiver command failed", "operation", "pause", "error", err)
+		http.Error(w, "Receiver command failed: "+err.Error(), http.StatusBadGateway)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "action": "pause"})
@@ -373,8 +399,14 @@ func (s *Server) handleAPIStop(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	ctrl := s.controller
 	s.mu.RUnlock()
-	if ctrl != nil {
-		_ = ctrl.Stop()
+	if ctrl == nil {
+		http.Error(w, "no receiver configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := ctrl.Stop(); err != nil {
+		slog.Error("Receiver command failed", "operation", "stop", "error", err)
+		http.Error(w, "Receiver command failed: "+err.Error(), http.StatusBadGateway)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "action": "stop"})
@@ -421,8 +453,14 @@ func (s *Server) handleAPISeek(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if ctrl != nil {
-		_ = ctrl.Seek(targetSec)
+	if ctrl == nil {
+		http.Error(w, "no receiver configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := ctrl.Seek(targetSec); err != nil {
+		slog.Error("Receiver command failed", "operation", "seek", "error", err)
+		http.Error(w, "Receiver command failed: "+err.Error(), http.StatusBadGateway)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "currentTime": targetSec})
@@ -450,8 +488,14 @@ func (s *Server) handleAPIVolume(w http.ResponseWriter, r *http.Request) {
 	}
 	muted := mutedStr == "true" || mutedStr == "1"
 
-	if ctrl != nil {
-		_ = ctrl.SetVolume(lvl, muted)
+	if ctrl == nil {
+		http.Error(w, "no receiver configured", http.StatusServiceUnavailable)
+		return
+	}
+	if err := ctrl.SetVolume(lvl, muted); err != nil {
+		slog.Error("Receiver command failed", "operation", "setvolume", "error", err)
+		http.Error(w, "Receiver command failed: "+err.Error(), http.StatusBadGateway)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{"status": "ok", "level": lvl, "muted": muted})
@@ -467,4 +511,32 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, _ = w.Write(data)
+}
+
+// Unwrap preserves access to streaming operations through http.ResponseController.
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (w *loggingResponseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *loggingResponseWriter) WriteHeader(status int) {
+	if !w.wroteHeader && status >= 200 {
+		w.status = status
+		w.wroteHeader = true
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+func (w *loggingResponseWriter) Write(p []byte) (int, error) {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(p)
+}
+func (w *loggingResponseWriter) Flush() {
+	if !w.wroteHeader {
+		w.WriteHeader(http.StatusOK)
+	}
+	_ = http.NewResponseController(w.ResponseWriter).Flush()
 }

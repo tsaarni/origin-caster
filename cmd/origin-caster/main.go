@@ -109,7 +109,7 @@ func main() {
 			os.Exit(1)
 		}
 		targetDevice = target
-		slog.Info("Bound to physical receiver", "name", targetDevice.FriendlyName, "model", targetDevice.ModelName, "ip", targetDevice.IP.String(), "port", targetDevice.Port)
+		slog.Info("Selected physical receiver", "name", targetDevice.FriendlyName, "model", targetDevice.ModelName, "ip", targetDevice.IP.String(), "port", targetDevice.Port)
 	}
 
 	// Detect the LAN IP used in the proxy URL the TV is told to fetch.

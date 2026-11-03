@@ -84,7 +84,7 @@ func (m *multiHandler) WithGroup(name string) slog.Handler {
 //
 //	14:25:39.530 INF Discovering physical Chromecast on LAN timeout=3s
 type consoleHandler struct {
-	mu     sync.Mutex
+	mu     *sync.Mutex
 	w      io.Writer
 	level  slog.Leveler
 	attrs  []slog.Attr
@@ -100,7 +100,7 @@ func newConsoleHandler(w io.Writer, level slog.Leveler) *consoleHandler {
 			color = fi.Mode()&os.ModeCharDevice != 0
 		}
 	}
-	return &consoleHandler{w: w, level: level, color: color}
+	return &consoleHandler{w: w, level: level, color: color, mu: &sync.Mutex{}}
 }
 
 func (h *consoleHandler) Enabled(_ context.Context, level slog.Level) bool {
@@ -115,29 +115,11 @@ func (h *consoleHandler) Handle(_ context.Context, r slog.Record) error {
 	buf.WriteByte(' ')
 	buf.WriteString(r.Message)
 
-	attrs := make([]slog.Attr, 0, r.NumAttrs()+len(h.attrs))
-	attrs = append(attrs, h.attrs...)
-	r.Attrs(func(a slog.Attr) bool {
-		attrs = append(attrs, a)
-		return true
-	})
-	prefix := strings.Join(h.groups, ".")
-
-	for _, a := range attrs {
-		if a.Equal(slog.Attr{}) {
-			continue
-		}
-		if a.Value.Kind() == slog.KindGroup {
-			for _, ga := range a.Value.Group() {
-				if ga.Equal(slog.Attr{}) {
-					continue
-				}
-				h.writeAttr(&buf, prefix, a.Key+"."+ga.Key, ga.Value)
-			}
-			continue
-		}
-		h.writeAttr(&buf, prefix, a.Key, a.Value)
+	for _, a := range h.attrs {
+		h.writeResolvedAttr(&buf, "", a)
 	}
+	prefix := strings.Join(h.groups, ".")
+	r.Attrs(func(a slog.Attr) bool { h.writeResolvedAttr(&buf, prefix, a); return true })
 
 	buf.WriteByte('\n')
 
@@ -157,26 +139,47 @@ func (h *consoleHandler) writeAttr(buf *bytes.Buffer, prefix, key string, v slog
 	buf.WriteString(renderValue(v))
 }
 
-func (h *consoleHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	c := &consoleHandler{
-		w:      h.w,
-		level:  h.level,
-		color:  h.color,
-		attrs:  append(append([]slog.Attr{}, h.attrs...), attrs...),
-		groups: h.groups,
+func (h *consoleHandler) writeResolvedAttr(buf *bytes.Buffer, prefix string, a slog.Attr) {
+	a.Value = a.Value.Resolve()
+	if a.Equal(slog.Attr{}) {
+		return
 	}
-	return c
+	if a.Value.Kind() == slog.KindGroup {
+		if a.Key != "" {
+			if prefix != "" {
+				prefix += "."
+			}
+			prefix += a.Key
+		}
+		for _, child := range a.Value.Group() {
+			h.writeResolvedAttr(buf, prefix, child)
+		}
+		return
+	}
+	h.writeAttr(buf, prefix, a.Key, a.Value)
+}
+
+func (h *consoleHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	c := *h
+	c.attrs = append([]slog.Attr{}, h.attrs...)
+	for _, a := range attrs {
+		a.Value = a.Value.Resolve()
+		// Bind the current group now, so later WithGroup calls cannot move it.
+		for i := len(h.groups) - 1; i >= 0; i-- {
+			a = slog.GroupAttrs(h.groups[i], a)
+		}
+		c.attrs = append(c.attrs, a)
+	}
+	return &c
 }
 
 func (h *consoleHandler) WithGroup(name string) slog.Handler {
-	c := &consoleHandler{
-		w:      h.w,
-		level:  h.level,
-		color:  h.color,
-		attrs:  h.attrs,
-		groups: append(append([]string{}, h.groups...), name),
+	if name == "" {
+		return h
 	}
-	return c
+	c := *h
+	c.groups = append(append([]string{}, h.groups...), name)
+	return &c
 }
 
 func (h *consoleHandler) levelColor(l slog.Level, s string) string {

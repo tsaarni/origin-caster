@@ -32,19 +32,19 @@ type CastRequest struct {
 
 // PlaybackState represents current media playback status on the physical TV.
 type PlaybackState struct {
-	MediaSessionID int                    `json:"mediaSessionId"`
-	PlayerState    string                 `json:"playerState"` // "PLAYING", "PAUSED", "BUFFERING", "IDLE"
-	CurrentTime    float64                `json:"currentTime"`
-	Duration       float64                `json:"duration"`
-	VolumeLevel    float64                `json:"volumeLevel"`
-	Muted          bool                   `json:"muted"`
-	ContentID      string                 `json:"contentId"`
-	Title          string                 `json:"title"`
-	LastUpdate     time.Time              `json:"lastUpdate"`
-	ActiveApp      string                 `json:"activeApp"`
-	ReceiverName   string                 `json:"receiverName,omitempty"`
-	ReceiverModel  string                 `json:"receiverModel,omitempty"`
-	ReceiverIP     string                 `json:"receiverIP,omitempty"`
+	MediaSessionID int       `json:"mediaSessionId"`
+	PlayerState    string    `json:"playerState"` // "PLAYING", "PAUSED", "BUFFERING", "IDLE"
+	CurrentTime    float64   `json:"currentTime"`
+	Duration       float64   `json:"duration"`
+	VolumeLevel    float64   `json:"volumeLevel"`
+	Muted          bool      `json:"muted"`
+	ContentID      string    `json:"contentId"`
+	Title          string    `json:"title"`
+	LastUpdate     time.Time `json:"lastUpdate"`
+	ActiveApp      string    `json:"activeApp"`
+	ReceiverName   string    `json:"receiverName,omitempty"`
+	ReceiverModel  string    `json:"receiverModel,omitempty"`
+	ReceiverIP     string    `json:"receiverIP,omitempty"`
 }
 
 // Stats tracks media proxy metrics.
@@ -261,11 +261,11 @@ func (s *Server) handleProxy(w http.ResponseWriter, r *http.Request) {
 	atomic.AddInt64(&s.stats.ActiveStreams, 1)
 	defer atomic.AddInt64(&s.stats.ActiveStreams, -1)
 
-	slog.Debug("Proxy handling media request", "upstream", rawTargetURL)
+	slog.Debug("Proxy handling media request", "upstream", SafeLogURL(rawTargetURL))
 
 	resp, err := s.client.Do(upstreamReq)
 	if err != nil {
-		slog.Error("Upstream fetch error", "error", err, "url", rawTargetURL)
+		slog.Error("Upstream fetch error", "error", SafeLogError(err), "url", SafeLogURL(rawTargetURL))
 		http.Error(w, fmt.Sprintf("upstream request error: %v", err), http.StatusBadGateway)
 		return
 	}
@@ -303,11 +303,11 @@ func (s *Server) handleM3U8(w http.ResponseWriter, r io.Reader, baseURL *url.URL
 		return
 	}
 
-	slog.Debug("Original M3U8 manifest", "url", baseURL.String(), "manifest", string(bodyBytes))
+	slog.Debug("M3U8 manifest received", "url", SafeLogURL(baseURL.String()), "bytes", len(bodyBytes))
 
 	rewritten := RewriteM3U8(string(bodyBytes), baseURL, s.BaseURL())
 
-	slog.Debug("M3U8 manifest rewritten", "url", baseURL.String(), "length", len(rewritten))
+	slog.Debug("M3U8 manifest rewritten", "url", SafeLogURL(baseURL.String()), "length", len(rewritten))
 
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(rewritten)))
@@ -386,5 +386,3 @@ func (s *Server) streamMedia(w http.ResponseWriter, upstreamResp *http.Response,
 	}
 	atomic.AddUint64(&s.stats.TotalBytesServed, written)
 }
-
-

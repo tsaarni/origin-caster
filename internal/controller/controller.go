@@ -28,6 +28,7 @@ type DeviceController struct {
 	clientTLS    *tls.Config
 	conn         net.Conn
 	mu           sync.Mutex
+	writeMu      sync.Mutex
 	transportID  string
 	sessionID    string
 	mediaSession int
@@ -79,7 +80,9 @@ func (c *DeviceController) EnsureConnection() error {
 		return errors.New("no target device configured")
 	}
 
-	targetAddr := fmt.Sprintf("%s:%d", c.target.IP.String(), c.target.Port)
+	targetAddr := net.JoinHostPort(c.target.IP.String(), fmt.Sprint(c.target.Port))
+	started := time.Now()
+	slog.Debug("Connecting to Chromecast", "address", targetAddr, "device_id", c.target.ID, "timeout", 5*time.Second)
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	conn, err := tls.DialWithDialer(dialer, "tcp", targetAddr, c.clientTLS)
 	if err != nil {
@@ -89,19 +92,20 @@ func (c *DeviceController) EnsureConnection() error {
 
 	// Connect to receiver-0
 	connectMsg := castproto.NewStringMessage(controllerSenderID, "receiver-0", castproto.NamespaceConnection, `{"type":"CONNECT"}`)
-	if err := castproto.WriteFramedMessage(c.conn, connectMsg); err != nil {
+	if err := c.writeMessage(c.conn, connectMsg); err != nil {
 		_ = c.conn.Close()
 		c.conn = nil
 		return fmt.Errorf("failed to send CONNECT: %w", err)
 	}
 
-	go c.listenLoop()
-	go c.heartbeatLoop()
+	slog.Info("Chromecast connected", "address", targetAddr, "duration", time.Since(started))
+	go c.listenLoop(conn)
+	go c.heartbeatLoop(conn)
 
 	return nil
 }
 
-func (c *DeviceController) listenLoop() {
+func (c *DeviceController) listenLoop(conn net.Conn) {
 	for {
 		select {
 		case <-c.done:
@@ -109,23 +113,9 @@ func (c *DeviceController) listenLoop() {
 		default:
 		}
 
-		c.mu.Lock()
-		conn := c.conn
-		c.mu.Unlock()
-
-		if conn == nil {
-			return
-		}
-
 		msg, err := castproto.ReadFramedMessage(conn)
 		if err != nil {
-			slog.Debug("TV connection read error", "error", err)
-			c.mu.Lock()
-			if c.conn != nil {
-				_ = c.conn.Close()
-				c.conn = nil
-			}
-			c.mu.Unlock()
+			c.connectionFailed(conn, "read", err)
 			return
 		}
 
@@ -133,7 +123,7 @@ func (c *DeviceController) listenLoop() {
 	}
 }
 
-func (c *DeviceController) heartbeatLoop() {
+func (c *DeviceController) heartbeatLoop(conn net.Conn) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 
@@ -143,20 +133,29 @@ func (c *DeviceController) heartbeatLoop() {
 			return
 		case <-ticker.C:
 			c.mu.Lock()
-			conn := c.conn
+			current := c.conn
 			tid := c.transportID
 			c.mu.Unlock()
+			if current != conn {
+				return
+			}
 			if conn != nil {
 				// Heartbeat PING
 				ping := castproto.NewStringMessage(controllerSenderID, "receiver-0", castproto.NamespaceHeartbeat, `{"type":"PING"}`)
-				_ = castproto.WriteFramedMessage(conn, ping)
+				if err := c.writeMessage(conn, ping); err != nil {
+					c.connectionFailed(conn, "heartbeat", err)
+					return
+				}
 
 				// Poll media status if app transport is active
 				if tid != "" {
 					reqID := c.nextRequestID()
 					mediaStatusReq := fmt.Sprintf(`{"type":"GET_STATUS","requestId":%d}`, reqID)
 					msg := castproto.NewStringMessage(controllerSenderID, tid, castproto.NamespaceMedia, mediaStatusReq)
-					_ = castproto.WriteFramedMessage(conn, msg)
+					if err := c.writeMessage(conn, msg); err != nil {
+						c.connectionFailed(conn, "status poll", err)
+						return
+					}
 				}
 			}
 		}
@@ -173,11 +172,17 @@ func (c *DeviceController) handleIncomingMessage(msg *castproto.CastMessage) {
 
 	var raw map[string]any
 	if err := json.Unmarshal([]byte(*msg.PayloadUtf8), &raw); err != nil {
+		slog.Warn("Invalid Cast message", "namespace", msg.Namespace, "error", err)
 		return
 	}
 
 	msgType, _ := raw["type"].(string)
+	if msgType != "MEDIA_STATUS" && msgType != "RECEIVER_STATUS" {
+		slog.Debug("Cast message received", "type", msgType, "namespace", msg.Namespace, "request_id", raw["requestId"])
+	}
 	switch msgType {
+	case "LAUNCH_ERROR", "LOAD_FAILED", "LOAD_CANCELLED", "INVALID_REQUEST":
+		slog.Error("Receiver rejected Cast command", "type", msgType, "request_id", raw["requestId"], "reason", raw["reason"])
 	case "RECEIVER_STATUS":
 		if status, ok := raw["status"].(map[string]any); ok {
 			if vol, ok := status["volume"].(map[string]any); ok {
@@ -275,8 +280,12 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 	probePayload := fmt.Sprintf(`{"type":"GET_STATUS","requestId":%d}`, probeReqID)
 	probeMsg := castproto.NewStringMessage(controllerSenderID, "receiver-0", castproto.NamespaceReceiver, probePayload)
 	c.mu.Lock()
-	_ = castproto.WriteFramedMessage(c.conn, probeMsg)
+	probeErr := c.writeMessage(c.conn, probeMsg)
 	c.mu.Unlock()
+
+	if probeErr != nil {
+		return fmt.Errorf("failed to send receiver GET_STATUS: %w", probeErr)
+	}
 
 	// Wait for RECEIVER_STATUS response to populate sessionID
 	for range 10 {
@@ -298,10 +307,13 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 		stopPayload := fmt.Sprintf(`{"type":"STOP","requestId":%d,"sessionId":"%s"}`, c.nextRequestID(), existingSID)
 		stopMsg := castproto.NewStringMessage(controllerSenderID, "receiver-0", castproto.NamespaceReceiver, stopPayload)
 		c.mu.Lock()
-		_ = castproto.WriteFramedMessage(c.conn, stopMsg)
+		stopErr := c.writeMessage(c.conn, stopMsg)
 		c.transportID = ""
 		c.sessionID = ""
 		c.mu.Unlock()
+		if stopErr != nil {
+			return fmt.Errorf("failed to send receiver STOP: %w", stopErr)
+		}
 		// Wait for the STOP to take effect; also wait for RECEIVER_STATUS with empty applications
 		for range 15 {
 			time.Sleep(200 * time.Millisecond)
@@ -323,7 +335,7 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 	c.mu.Lock()
 	c.transportID = ""
 	c.sessionID = ""
-	err := castproto.WriteFramedMessage(c.conn, launchMsg)
+	err := c.writeMessage(c.conn, launchMsg)
 	c.mu.Unlock()
 	if err != nil {
 		return fmt.Errorf("failed to send LAUNCH: %w", err)
@@ -339,6 +351,9 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 		sid = c.sessionID
 		conn = c.conn
 		c.mu.Unlock()
+		if conn == nil {
+			return errors.New("Chromecast disconnected while waiting for receiver launch")
+		}
 		if tid != "" {
 			break
 		}
@@ -352,11 +367,13 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 
 	// 3. Send CONNECT to the launched app's transport ID
 	appConnect := castproto.NewStringMessage(controllerSenderID, tid, castproto.NamespaceConnection, `{"type":"CONNECT","origin":{}}`)
-	_ = castproto.WriteFramedMessage(conn, appConnect)
+	if err := c.writeMessage(conn, appConnect); err != nil {
+		return fmt.Errorf("failed to connect app transport: %w", err)
+	}
 
 	// 4. Build proxied URL
 	proxyURL := c.httpProxy.BuildProxyURL(req.URL)
-	slog.Info("Initiating playback via proxy URL", "url", req.URL, "proxyURL", proxyURL)
+	slog.Info("Initiating playback via proxy URL", "url", proxy.SafeLogURL(req.URL), "proxyURL", proxy.SafeLogURL(proxyURL))
 
 	contentType := normalizeContentType(req.ContentType, req.URL, headersMap)
 
@@ -391,7 +408,7 @@ func (c *DeviceController) CastMedia(req proxy.CastRequest) error {
 
 	loadMsg := castproto.NewStringMessage(controllerSenderID, tid, castproto.NamespaceMedia, string(loadBytes))
 	c.mu.Lock()
-	err = castproto.WriteFramedMessage(c.conn, loadMsg)
+	err = c.writeMessage(c.conn, loadMsg)
 	c.mu.Unlock()
 
 	if err != nil {
@@ -546,7 +563,7 @@ func (c *DeviceController) SetVolume(level float64, muted bool) error {
 	reqID := c.nextRequestID()
 	payload := fmt.Sprintf(`{"type":"SET_VOLUME","requestId":%d,"volume":{"level":%f,"muted":%t}}`, reqID, level, muted)
 	msg := castproto.NewStringMessage(controllerSenderID, "receiver-0", castproto.NamespaceReceiver, payload)
-	return castproto.WriteFramedMessage(c.conn, msg)
+	return c.writeMessage(c.conn, msg)
 }
 
 func (c *DeviceController) sendMediaCommand(cmdJSON string) error {
@@ -574,7 +591,7 @@ func (c *DeviceController) sendMediaCommand(cmdJSON string) error {
 
 	b, _ := json.Marshal(raw)
 	msg := castproto.NewStringMessage(controllerSenderID, tid, castproto.NamespaceMedia, string(b))
-	return castproto.WriteFramedMessage(c.conn, msg)
+	return c.writeMessage(c.conn, msg)
 }
 
 // Close closes controller connections.
@@ -588,4 +605,41 @@ func (c *DeviceController) Close() {
 		}
 		c.mu.Unlock()
 	}
+}
+
+// writeMessage serializes complete frames, including background heartbeat writes.
+func (c *DeviceController) writeMessage(conn net.Conn, msg *castproto.CastMessage) error {
+	if conn == nil {
+		return errors.New("not connected")
+	}
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	defer conn.SetWriteDeadline(time.Time{})
+	if msg.Namespace != castproto.NamespaceHeartbeat {
+		var metadata struct {
+			Type      string `json:"type"`
+			RequestID int    `json:"requestId"`
+		}
+		if msg.PayloadUtf8 != nil {
+			_ = json.Unmarshal([]byte(*msg.PayloadUtf8), &metadata)
+		}
+		slog.Debug("Sending Cast message", "namespace", msg.Namespace, "destination", msg.DestinationId, "type", metadata.Type, "request_id", metadata.RequestID)
+	}
+	return castproto.WriteFramedMessage(conn, msg)
+}
+
+func (c *DeviceController) connectionFailed(conn net.Conn, operation string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.conn != conn {
+		return
+	}
+	if atomic.LoadInt32(&c.closed) == 0 {
+		slog.Warn("Chromecast disconnected", "address", conn.RemoteAddr().String(), "operation", operation, "error", err)
+	}
+	_ = conn.Close()
+	c.conn = nil
+	c.transportID, c.sessionID = "", ""
+	c.mediaSession = 0
 }

@@ -18,7 +18,7 @@ without authentication. Do not use it on a public network.
 ### 2. Cast from Any Browser Tab
 1. Open the video on any streaming website.
 2. Open Chrome DevTools (**F12** or **Cmd+Option+I**) and switch to the **Console** tab.
-3. If the video player is embedded, select the player `<iframe>` from the Console dropdown (defaults to `top`).
+3. Select the video's JavaScript context using the **element picker** icon in the **top-left corner of DevTools** (**Ctrl+Shift+C** or **Cmd+Shift+C**), then click the video and return to the **Console** tab. Alternatively, select the player `<iframe>` from the JavaScript context dropdown in the Console tab (defaults to `top`).
 4. Open **http://localhost:8888** in your browser, click **Copy Extraction Snippet**, paste it into the Console, and press **Enter**.
 5. Playback starts on the TV with live remote controls (play, pause, seek, volume) on the web dashboard (launch takes a few seconds; Android TV can take up to ~20 s).
 
@@ -37,6 +37,11 @@ without authentication. Do not use it on a public network.
 | `-scan-timeout` | `3s` | Timeout for the device scan |
 | `-log-file` | `""` | Also write logs to this file (default: stderr only) |
 | `-v` / `-verbose` | `false` | Verbose protocol logging |
+
+Use `-v -log-file logs.jsonl` to capture discovery, connection, Cast command and HTTP request diagnostics in both the console and a JSONL file. Discovery debug logs include devices found, rejected entries, duplicates and scan duration. Unexpected disconnections and receiver command failures are visible without `-v`; control API failures return an HTTP error.
+
+Media URL credentials, query strings and fragments are omitted from diagnostic URL fields, and manifest contents are not logged. The mDNS dependency does not expose all asynchronous socket errors, so an empty scan cannot establish whether multicast traffic was blocked.
+
 
 ## Development & Architecture
 
