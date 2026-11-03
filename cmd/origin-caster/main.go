@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -10,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,25 +23,17 @@ import (
 )
 
 func main() {
-	var (
-		lanIP    = flag.String("lan-ip", "", "LAN IP advertised in the proxy URL handed to the TV. Auto-detected if empty")
-		httpAddr = flag.String("http-addr", ":8888", "Address (host:port) of the web dashboard and media proxy. The browser opens the dashboard here and the TV fetches video here; ':8888' listens on all interfaces and advertises the detected LAN IP")
+	cfg, err := parseArgs(os.Args[1:])
+	if errors.Is(err, flag.ErrHelp) {
+		usage(os.Stdout)
+		return
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "origin-caster: %v\nRun with --help for usage.\n", err)
+		os.Exit(2)
+	}
 
-		tvName = flag.String("tv-name", "", "Name of the physical TV or Chromecast to cast to. Case-insensitive substring match; if empty, the first device found is used")
-		tvIP   = flag.String("tv-ip", "", "IP address of the physical TV or Chromecast. Auto-discovered if empty")
-		tvPort = flag.Int("tv-port", 8009, "Port of the physical TV's Cast V2 service")
-
-		scanTimeout = flag.Duration("scan-timeout", 3*time.Second, "Timeout for the device scan")
-		listOnly    = flag.Bool("list", false, "Scan the LAN for Chromecast devices, print them, and exit")
-
-		verbose = flag.Bool("v", false, "Verbose protocol logging")
-		logFile = flag.String("log-file", "", "Also write logs to this file (default: stderr only)")
-	)
-	flag.BoolVar(verbose, "verbose", false, "alias for -v")
-	flag.Usage = usage
-	flag.Parse()
-
-	logHandle, err := initLogger(*logFile, *verbose)
+	logHandle, err := initLogger(cfg.logFile, cfg.verbose)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error initializing logger: %v\n", err)
 		os.Exit(1)
@@ -50,24 +42,16 @@ func main() {
 		defer logHandle.Close()
 	}
 
-	// Validate -http-addr (host:port) early; host may be empty (':8888').
-	httpHost, httpPortStr, err := net.SplitHostPort(*httpAddr)
-	if err != nil {
-		slog.Error("Invalid -http-addr", "addr", *httpAddr, "error", err, "tip", "expected host:port, e.g. localhost:8888 or 192.168.1.50:8888")
-		os.Exit(1)
-	}
-	if _, err := strconv.Atoi(httpPortStr); err != nil {
-		slog.Error("Invalid port in -http-addr", "port", httpPortStr)
-		os.Exit(1)
-	}
+	// parseArgs has already validated the address.
+	httpHost, httpPortStr, _ := net.SplitHostPort(cfg.httpAddr)
 
 	// Scan for physical Chromecast devices
 	discoverer := mdns.NewDiscoverer()
 	ctx := context.Background()
 
-	if *listOnly {
-		slog.Info("Scanning LAN for Chromecast devices", "timeout", *scanTimeout)
-		devices, err := discoverer.Discover(ctx, *scanTimeout)
+	if cfg.listOnly {
+		slog.Info("Scanning LAN for Chromecast devices", "timeout", cfg.scanTimeout)
+		devices, err := discoverer.Discover(ctx, cfg.scanTimeout)
 		if err != nil {
 			slog.Error("Discovery failed", "error", err)
 			os.Exit(1)
@@ -87,23 +71,23 @@ func main() {
 
 	// Determine the physical device to control
 	var targetDevice *mdns.DiscoveredDevice
-	if *tvIP != "" {
-		ip := net.ParseIP(*tvIP)
+	if cfg.tvIP != "" {
+		ip := net.ParseIP(cfg.tvIP)
 		if ip == nil {
-			slog.Error("Invalid -tv-ip", "ip", *tvIP)
+			slog.Error("Invalid -tv-ip", "ip", cfg.tvIP)
 			os.Exit(1)
 		}
 		targetDevice = &mdns.DiscoveredDevice{
-			ID:           "manual-" + *tvIP,
-			FriendlyName: fmt.Sprintf("Physical TV (%s)", *tvIP),
+			ID:           "manual-" + cfg.tvIP,
+			FriendlyName: fmt.Sprintf("Physical TV (%s)", cfg.tvIP),
 			ModelName:    "Chromecast",
 			IP:           ip,
-			Port:         *tvPort,
+			Port:         cfg.tvPort,
 		}
 		slog.Info("Using manually specified physical receiver", "ip", targetDevice.IP.String(), "port", targetDevice.Port)
 	} else {
-		slog.Info("Discovering physical Chromecast on LAN", "timeout", *scanTimeout)
-		target, err := discoverer.FindTarget(ctx, *tvName, *scanTimeout)
+		slog.Info("Discovering physical Chromecast on LAN", "timeout", cfg.scanTimeout)
+		target, err := discoverer.FindTarget(ctx, cfg.tvName, cfg.scanTimeout)
 		if err != nil {
 			slog.Error("Target Chromecast discovery failed", "error", err, "tip", "Specify physical Chromecast IP directly with -tv-ip <ip>")
 			os.Exit(1)
@@ -114,10 +98,10 @@ func main() {
 
 	// Detect the LAN IP used in the proxy URL the TV is told to fetch.
 	var localIP net.IP
-	if *lanIP != "" {
-		localIP = net.ParseIP(*lanIP)
+	if cfg.lanIP != "" {
+		localIP = net.ParseIP(cfg.lanIP)
 		if localIP == nil {
-			slog.Error("Invalid IP specified in -lan-ip", "ip", *lanIP)
+			slog.Error("Invalid IP specified in -lan-ip", "ip", cfg.lanIP)
 			os.Exit(1)
 		}
 	} else {
@@ -142,7 +126,7 @@ func main() {
 	// localhost - casting would silently fail (icon shows, no media).
 	if isLoopbackHost(httpHost) {
 		slog.Warn("HTTP server is loopback-only: the browser snippet works, but the TV cannot reach this address",
-			"addr", *httpAddr,
+			"addr", cfg.httpAddr,
 			"tip", "run with a LAN-reachable address, e.g. -http-addr 192.168.1.50:8888 or -http-addr :8888")
 	}
 
@@ -152,29 +136,30 @@ func main() {
 	webServer.SetController(ctrl)
 
 	httpServer := &http.Server{
-		Addr:         *httpAddr,
+		Addr:         cfg.httpAddr,
 		Handler:      webServer.Handler(),
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: 0, // Streaming media requires indefinite write time
 	}
 
+	fmt.Println("\norigin-caster")
+	fmt.Printf("  %-11s %s\n", "Dashboard", baseURL+"/")
+	fmt.Printf("  %-11s %s/proxy\n", "Media proxy", baseURL)
+	fmt.Printf("  %-11s %s (%s)\n", "TV", targetDevice.FriendlyName, targetDevice.IP.String())
+	if cfg.logFile != "" {
+		fmt.Printf("  %-11s %s\n", "Log file", cfg.logFile)
+	}
+	fmt.Println("\nPress Ctrl+C to stop.")
+	fmt.Println()
+
 	go func() {
-		slog.Info("Local media proxy listening", "url", baseURL+"/proxy")
-		slog.Info("Web Dashboard & Cast Controller", "url", baseURL+"/")
+		slog.Debug("Local media proxy listening", "url", baseURL+"/proxy")
+		slog.Debug("Web Dashboard & Cast Controller", "url", baseURL+"/")
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("HTTP server failed", "error", err)
 			os.Exit(1)
 		}
 	}()
-
-	fmt.Println("==========================================================================")
-	fmt.Printf(" Web Dashboard & Remote Controller: %s\n", baseURL)
-	fmt.Printf(" Local Media Proxy:               %s/proxy\n", baseURL)
-	fmt.Printf(" Physical TV Receiver Target:       %s (%s)\n", targetDevice.FriendlyName, targetDevice.IP.String())
-	if *logFile != "" {
-		fmt.Printf(" File Logging Enabled:              %s\n", *logFile)
-	}
-	fmt.Println("==========================================================================")
 
 	// Wait for Shutdown Signal
 	sigChan := make(chan os.Signal, 1)
@@ -189,59 +174,6 @@ func main() {
 	_ = httpServer.Shutdown(ctxShut)
 
 	slog.Info("origin-caster stopped.")
-}
-
-// usage prints the help text shown by -h/--help and on flag errors.
-func usage() {
-	fmt.Fprintf(os.Stderr, `origin-caster - play browser video on your TV
-
-What it does
-  origin-caster controls a physical TV (Chromecast or Android TV) from your
-  browser. The browser snippet captures the video URL and the browser's
-  request headers (cookies, referer, user-agent) from the streaming site; the
-  TV then plays the video through the local media proxy, because it cannot
-  pass the media site's cookie and header checks by itself.
-
-Port
-  8888  Dashboard and proxy - you open the dashboard here; the TV fetches video here
-
-Flags
-`)
-	groups := []struct {
-		title string
-		names []string
-	}{
-		{"Web server (dashboard and media proxy)", []string{"http-addr", "lan-ip"}},
-		{"Physical TV (the device that plays the video)", []string{"tv-name", "tv-ip", "tv-port"}},
-		{"Discovery and diagnostics", []string{"list", "scan-timeout"}},
-		{"Logging", []string{"v", "verbose", "log-file"}},
-	}
-	for _, g := range groups {
-		fmt.Fprintf(os.Stderr, "%s:\n", g.title)
-		for _, name := range g.names {
-			printFlagHelp(flag.Lookup(name))
-		}
-		fmt.Fprintln(os.Stderr)
-	}
-}
-
-// printFlagHelp prints one flag in the standard "go help" style:
-// name and type on the first line, description (and default) indented below.
-func printFlagHelp(f *flag.Flag) {
-	if f == nil {
-		return
-	}
-	typ, usageText := flag.UnquoteUsage(f)
-	line := fmt.Sprintf("  -%s", f.Name)
-	if typ != "" {
-		line += " " + typ
-	}
-	fmt.Fprintln(os.Stderr, line)
-	desc := "    \t" + usageText
-	if f.DefValue != "" && f.DefValue != "false" {
-		desc += fmt.Sprintf(" (default %s)", f.DefValue)
-	}
-	fmt.Fprintln(os.Stderr, desc)
 }
 
 // isLoopbackHost reports whether host refers to the local machine only
